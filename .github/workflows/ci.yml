@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt pytest
+      - name: Unit tests
+        run: pytest tests -q
+      - name: Import smoke (every module loads)
+        run: |
+          python - <<'EOF'
+          import importlib, pkgutil
+          import tefaslab
+          for m in pkgutil.iter_modules(tefaslab.__path__):
+              importlib.import_module(f"tefaslab.{m.name}")
+              print("ok", m.name)
+          EOF
