@@ -78,10 +78,11 @@ Full command reference: [docs/USAGE.md](docs/USAGE.md)
 
 Active. Done recently: institutional audit (with fixes), EMK pension
 funds, Newey–West + out-of-sample robustness, TCMB EVDS macro layer
-with a regime engine (inflation/rates/FX classification + historical
-category winners). Next: KAP holdings parser (individual stock
-positions per fund — feasibility proven, unlocks true stock-selection
-attribution), needs-based fund screener, daily anomaly alerts,
-portfolio builder.
+with a regime engine, and the **KAP holdings scoping sprint** — fund
+stock-level holdings (monthly, ISIN-by-ISIN) are confirmed accessible
+and the pipeline is fully specified
+([docs/KAP_HOLDINGS.md](docs/KAP_HOLDINGS.md)). Next: build the
+holdings parser + daily ID scanner → active share, crowding, true
+stock-selection attribution; then screener, alerts, portfolio builder.
 
 *Not investment advice. Built for research and education.*
