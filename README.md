@@ -69,6 +69,8 @@ Full command reference: [docs/USAGE.md](docs/USAGE.md)
 
 - [Architecture](docs/ARCHITECTURE.md) — ETL design, layers, operations
 - [Methodology](docs/METHODOLOGY.md) — every metric defined, with limitations
+- [Audit](docs/AUDIT.md) — institutional-readiness audit: what was checked, what was found, what was fixed
+- [Data dictionary](docs/DATA_DICTIONARY.md) — every table and column
 - [Research notes](docs/research/) — the four findings as standalone studies
 - [Usage](docs/USAGE.md) — CLI reference and database schema
 

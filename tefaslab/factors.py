@@ -141,12 +141,25 @@ def all_factor_betas(conn: sqlite3.Connection, days: int = 252,
         mask = ~np.isnan(y) & ~np.isnan(base).any(axis=1)
         if mask.sum() < min_obs:
             continue
-        coef, _, _, _ = np.linalg.lstsq(base[mask], y[mask], rcond=None)
-        resid = y[mask] - base[mask] @ coef
+        X = base[mask]
+        coef, _, _, _ = np.linalg.lstsq(X, y[mask], rcond=None)
+        resid = y[mask] - X @ coef
         var = y[mask].var()
+        # OLS standard errors. Overlapping K-day returns induce serial
+        # correlation, so scale the naive variance by ~K (a crude
+        # Hansen-Hodrick-style correction) — t-stats are conservative.
+        dof = max(int(mask.sum()) - X.shape[1], 1)
+        s2 = (resid @ resid) / dof * K_DAYS
+        try:
+            xtx_inv = np.linalg.inv(X.T @ X)
+            alpha_se = np.sqrt(s2 * xtx_inv[0, 0])
+            alpha_t = coef[0] / alpha_se if alpha_se > 0 else np.nan
+        except np.linalg.LinAlgError:
+            alpha_t = np.nan
         rows.append({
             "code": code,
             "alpha_annual": coef[0] / K_DAYS * metrics.TRADING_DAYS,
+            "alpha_t": alpha_t,
             **{f"beta_{f}": coef[i + 1] for i, f in enumerate(factor_names)},
             "r_squared": 1 - resid.var() / var if var > 0 else np.nan,
             "n_obs": int(mask.sum()),

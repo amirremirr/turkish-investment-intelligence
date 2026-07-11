@@ -7,6 +7,11 @@ flow is computed directly rather than inferred from AUM:
 
 which is equivalent to AUM_t - AUM_{t-1} * (1 + r_t) but immune to
 valuation noise. Positive = money entering the fund.
+
+Restructuring guard: rows where the daily NAV moves more than
+MAX_NAV_MOVE are excluded — those are share consolidations / unit
+restructurings, not investor flows (audit found a single such event
+carrying a fictitious -1.3 trillion TRY "flow").
 """
 
 from __future__ import annotations
@@ -14,6 +19,8 @@ from __future__ import annotations
 import sqlite3
 
 import pandas as pd
+
+MAX_NAV_MOVE = 0.50  # |daily NAV return| beyond this = restructuring
 
 
 def load_flow_frame(conn: sqlite3.Connection,
@@ -30,7 +37,9 @@ def load_flow_frame(conn: sqlite3.Connection,
         params = (fund_type,)
     df = pd.read_sql_query(query, conn, params=params, parse_dates=["date"])
     df = df.sort_values(["code", "date"])
+    nav_ret = df.groupby("code")["price"].pct_change(fill_method=None)
     df["flow"] = df.groupby("code")["shares"].diff() * df["price"]
+    df.loc[nav_ret.abs() > MAX_NAV_MOVE, "flow"] = pd.NA
     return df.dropna(subset=["flow"])
 
 

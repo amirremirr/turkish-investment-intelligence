@@ -62,6 +62,7 @@ def _components(conn: sqlite3.Connection, rf: float, min_aum: float,
 
     betas = factors.all_factor_betas(conn, min_obs=60)
     base["alpha_annual"] = betas["alpha_annual"].reindex(base.index)
+    base["alpha_t"] = betas["alpha_t"].reindex(base.index)
     base["r_squared"] = betas["r_squared"].reindex(base.index)
 
     flow = flows.load_flow_frame(conn)
@@ -84,14 +85,17 @@ def skill_scores(conn: sqlite3.Connection, rf: float = 0.0,
     c = components if components is not None \
         else _components(conn, rf, min_aum, min_investors, min_obs)
     pct = pd.DataFrame({
-        "alpha": c["alpha_annual"].rank(pct=True),
+        # rank the t-statistic, not raw alpha: a noisy 100% alpha on 3
+        # months of a tiny fund must not outrank a precise 15% alpha
+        "alpha": c["alpha_t"].rank(pct=True),
         "consistency": c["consistency"].rank(pct=True),
         "downside": c["max_dd"].rank(pct=True),
         "independence": (1 - c["r_squared"]).rank(pct=True),
     })
     score = sum(pct[k].fillna(0.5) * w for k, w in SKILL_WEIGHTS.items()) * 100
     out = c[["title", "category", "ret_1y", "sharpe", "max_dd",
-             "alpha_annual", "consistency", "r_squared", "aum"]].copy()
+             "alpha_annual", "alpha_t", "consistency", "r_squared",
+             "aum"]].copy()
     out["skill_score"] = score.round(1)
     return out.sort_values("skill_score", ascending=False)
 

@@ -56,6 +56,10 @@ r_fund = α + β₁·r_BIST100(+1) + β₂·r_gold_TRY(+2)
 - Overlapping observations induce autocorrelation: point estimates are
   consistent, but naive standard errors are understated. R² is always
   reported alongside betas.
+- **Alpha t-statistic**: OLS standard errors with the residual variance
+  inflated by ~K (a crude Hansen–Hodrick-style correction for the
+  overlap) — deliberately conservative. Rankings use the t-statistic,
+  never raw alpha (32% of funds clear |t| > 2 on the current sample).
 
 ## 4. Fund flows
 
@@ -69,6 +73,12 @@ flow_t = (shares_t − shares_{t-1}) × NAV_t
 equivalent to `AUM_t − AUM_{t-1}(1 + r_t)` but immune to valuation
 noise. Positive = money entering. Category flows are sums over funds;
 flow ratios normalize by AUM.
+
+- **Price choice**: NAV at *t*, so the identity above holds exactly.
+- **Restructuring guard**: flow observations where |daily NAV return|
+  > 50% are excluded — share consolidations masquerade as flows (the
+  audit found one fictitious −₺1.29tn "flow"; see
+  [AUDIT.md §2](AUDIT.md)).
 
 ## 5. Classification
 
@@ -86,10 +96,14 @@ percentiles within a quality-filtered universe (default: AUM ≥ ₺100mn,
 
 | Weight | Component |
 |---|---|
-| 35% | factor-model alpha (risk already removed) |
+| 35% | factor-model alpha **t-statistic** (risk removed, noise penalized) |
 | 25% | consistency (share of positive rolling 63-day windows) |
 | 20% | downside (max drawdown) |
 | 20% | factor independence (1 − R²) |
+
+Weight sensitivity was audited: ±5–10pp perturbations leave rank
+correlation ≥ 0.995 and 15–20 of the top-20 unchanged
+([AUDIT.md §4](AUDIT.md)).
 
 **Investor Suitability** — "should a typical investor buy this?"
 
