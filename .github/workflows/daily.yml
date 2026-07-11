@@ -1,0 +1,97 @@
+name: Daily pipeline
+
+on:
+  schedule:
+    # 18:30 Istanbul = 15:30 UTC, weekdays
+    - cron: "30 15 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "daily = incremental run · bootstrap = full rebuild (~2h)"
+        type: choice
+        options: [daily, bootstrap]
+        default: daily
+
+concurrency:
+  group: daily-pipeline
+  cancel-in-progress: false
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      EVDS_API_KEY: ${{ secrets.EVDS_API_KEY }}
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # The DB is stateful (KAP holdings history is forward-only), so
+      # it is persisted across runs via the actions cache. Every run
+      # saves a new cache key; restore-keys picks the newest.
+      - name: Restore database
+        uses: actions/cache/restore@v4
+        with:
+          path: data/funds.db
+          key: funds-db-${{ github.run_id }}
+          restore-keys: funds-db-
+
+      - name: Bootstrap (full rebuild)
+        if: github.event.inputs.mode == 'bootstrap'
+        run: |
+          python -m tefaslab ingest --start 2024-01-01
+          python -m tefaslab ingest --type EMK --start 2024-01-01
+          python -m tefaslab benchmarks --start 2024-01-01
+          python -m tefaslab stocks --start 2024-01-01
+          python -m tefaslab stocks --sectors
+          python -m tefaslab classify
+          python -m tefaslab evds
+          # recapture the known holdings block (ids are deterministic)
+          python -m tefaslab holdings scan --start 1604100 --count 150
+          python -m tefaslab holdings parse --count 50
+          python -m tefaslab daily --skip-raw
+
+      - name: Daily run
+        if: github.event.inputs.mode != 'bootstrap'
+        run: |
+          test -f data/funds.db || {
+            echo "::error::No database in cache — run this workflow "\
+            "manually once with mode=bootstrap"; exit 1; }
+          python scripts/run_daily.py --no-retry
+
+      - name: Monthly intelligence report (1st weekday of month)
+        if: github.event.inputs.mode != 'bootstrap'
+        run: |
+          if [ "$(date +%d)" -le 03 ]; then
+            python -m tefaslab report
+          fi
+
+      - name: Save database
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/funds.db
+          key: funds-db-${{ github.run_id }}
+
+      - name: Compress DB for backup artifact
+        if: always()
+        run: zstd -q -f data/funds.db -o funds.db.zst
+
+      - name: Upload backup + outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-${{ github.run_number }}
+          retention-days: 14
+          path: |
+            funds.db.zst
+            logs/
+            reports/
+          if-no-files-found: ignore

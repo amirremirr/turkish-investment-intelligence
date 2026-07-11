@@ -72,13 +72,25 @@ presentation tables by a scheduled nightly pipeline.
 ## Operations
 
 - `python -m tefaslab daily` — full ETL (raw refresh + rebuild + health
-  checks); `--skip-raw` for analytics-only rebuild.
-- Windows Task Scheduler runs [scripts/run_daily.py](../scripts/run_daily.py)
-  weekdays at 18:30: logs to `logs/`, retries once after 10 minutes,
-  raises a desktop notification and a dashboard banner on failure.
+  checks); `--skip-raw` for analytics-only rebuild. Pure Python, no OS
+  dependency.
+- **Primary scheduler: GitHub Actions**
+  ([.github/workflows/daily.yml](../.github/workflows/daily.yml)),
+  weekdays 18:30 Istanbul on ubuntu-latest. The stateful SQLite DB
+  (KAP holdings history is forward-only) persists between runs via the
+  Actions cache, with a zstd-compressed artifact backup (14-day
+  retention) after every run. One-time setup: add the `EVDS_API_KEY`
+  repo secret, then run the workflow manually once with
+  `mode=bootstrap` (~2h full rebuild in the cloud).
+- Legacy/local option: Windows Task Scheduler runs
+  [scripts/run_daily.py](../scripts/run_daily.py) (logs to `logs/`, one
+  retry, desktop notification on failure). Run either the cloud or the
+  local scheduler, not both — they would maintain divergent databases.
 - `python -m tefaslab health` — 9 data-quality checks (freshness,
   coverage, impossible values, return outliers, month continuity,
   benchmark staleness, classification); non-zero exit for schedulers.
+- CI ([ci.yml](../.github/workflows/ci.yml)): unit tests + import smoke
+  on every push, on Linux.
 
 ## Data source notes
 
