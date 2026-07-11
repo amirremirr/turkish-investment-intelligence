@@ -49,6 +49,13 @@ python -m tefaslab classify
 # TCMB macro (CPI, policy rate, deposits) — needs EVDS_API_KEY in .env
 python -m tefaslab evds
 python -m tefaslab regime   # current regime + historical winners
+
+# KAP fund holdings (stock-level, monthly)
+python -m tefaslab holdings scan --start 1604100 --count 500
+python -m tefaslab holdings parse --count 50
+python -m tefaslab holdings who ASELS    # which funds own it
+python -m tefaslab holdings fund IJZ     # a fund's full book
+python -m tefaslab holdings stats
 ```
 
 ## Analytics

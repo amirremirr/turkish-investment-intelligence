@@ -65,6 +65,24 @@ Source: Yahoo Finance. `cpi`/`policy_rate` reserved for TCMB EVDS.*
 
 *613 tickers with data, ~362k rows.*
 
+### fund_holdings (from KAP monthly portfolio reports)
+| Column | Type | Description |
+|---|---|---|
+| code, period, isin | PK | fund code, YYYY-MM, security ISIN |
+| ticker | TEXT | exchange ticker (BIST or foreign) |
+| name | TEXT | security name (best-effort from PDF layout) |
+| quantity | REAL | nominal/shares held |
+| value | REAL | market value, TRY, at report date |
+| weight_pct | REAL | % of fund total value |
+| disclosure_id | INTEGER | KAP disclosure the row came from |
+
+*Source: KAP "Portföy Dağılım Raporu" PDFs (see KAP_HOLDINGS.md).
+History accumulates forward from Apr-2026; coverage grows nightly.*
+
+### kap_disclosures
+Scanner ledger: one row per discovered portfolio-report disclosure
+(id, fund_title, year, period, obj_id, status found/parsed/error).
+
 ## Presentation tables (rebuilt nightly, never edited)
 
 | Table | Purpose | Built from |

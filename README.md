@@ -77,12 +77,12 @@ Full command reference: [docs/USAGE.md](docs/USAGE.md)
 ## Status & roadmap
 
 Active. Done recently: institutional audit (with fixes), EMK pension
-funds, Newey–West + out-of-sample robustness, TCMB EVDS macro layer
-with a regime engine, and the **KAP holdings scoping sprint** — fund
-stock-level holdings (monthly, ISIN-by-ISIN) are confirmed accessible
-and the pipeline is fully specified
-([docs/KAP_HOLDINGS.md](docs/KAP_HOLDINGS.md)). Next: build the
-holdings parser + daily ID scanner → active share, crowding, true
-stock-selection attribution; then screener, alerts, portfolio builder.
+funds, Newey–West + out-of-sample robustness, TCMB EVDS regime engine,
+and the **KAP holdings pipeline** — monthly stock-level fund holdings
+(ticker/ISIN/quantity/value/weight) scanned, parsed and queryable
+(`holdings who ASELS`); status, upsides and accepted limitations in
+[docs/KAP_HOLDINGS.md](docs/KAP_HOLDINGS.md). History accumulates
+forward nightly. Next: active share + crowding analytics on top of
+holdings, holdings-based attribution, screener, alerts.
 
 *Not investment advice. Built for research and education.*

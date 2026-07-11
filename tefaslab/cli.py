@@ -18,8 +18,8 @@ import pandas as pd
 import sys
 
 from . import (benchmarks, classify, compare, db, evds, factors, flows,
-               health, ingest, memo, metrics, pipeline, quality, regime,
-               report, research, rolling, smartmoney, stocks)
+               health, ingest, kap, memo, metrics, pipeline, quality,
+               regime, report, research, rolling, smartmoney, stocks)
 
 
 def _parse_date(s: str) -> date:
@@ -194,6 +194,31 @@ def cmd_quality(args) -> None:
     if args.csv:
         table.to_csv(args.csv)
         print(f"\nSaved full table to {args.csv}")
+
+
+def cmd_holdings(args) -> None:
+    conn = kap._connect()
+    pd.set_option("display.width", 220)
+    pd.set_option("display.max_colwidth", 45)
+    if args.action == "scan":
+        out = kap.scan_range(conn, args.start, args.count)
+        print(out)
+    elif args.action == "parse":
+        out = kap.parse_pending(conn, limit=args.count)
+        print(out)
+    elif args.action == "who":
+        print(kap.who_owns(conn, args.arg).round(2).to_string(index=False))
+    elif args.action == "fund":
+        print(kap.fund_book(conn, args.arg).round(2).to_string(index=False))
+    elif args.action == "stats":
+        n = conn.execute("SELECT COUNT(*), COUNT(DISTINCT code), "
+                         "COUNT(DISTINCT period) FROM fund_holdings") \
+            .fetchone()
+        d = conn.execute("SELECT status, COUNT(*) FROM kap_disclosures "
+                         "GROUP BY status").fetchall()
+        print(f"holdings rows: {n[0]:,} | funds: {n[1]} | periods: {n[2]}")
+        print("disclosures:", dict(d))
+    conn.close()
 
 
 def cmd_evds(args) -> None:
@@ -417,6 +442,14 @@ def main() -> None:
     p.add_argument("--min-investors", type=int, default=500)
     p.add_argument("--csv")
     p.set_defaults(func=cmd_quality)
+
+    p = sub.add_parser("holdings", help="KAP fund holdings pipeline")
+    p.add_argument("action", choices=["scan", "parse", "who", "fund",
+                                      "stats"])
+    p.add_argument("arg", nargs="?", help="ticker (who) / fund code (fund)")
+    p.add_argument("--start", type=int, help="scan start id")
+    p.add_argument("--count", type=int, default=100)
+    p.set_defaults(func=cmd_holdings)
 
     p = sub.add_parser("evds", help="fetch TCMB macro series (needs "
                                     "EVDS_API_KEY in env or .env)")

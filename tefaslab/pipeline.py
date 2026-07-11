@@ -18,7 +18,7 @@ import time
 from datetime import datetime
 
 from . import (benchmarks, classify, db, evds, factors, flows, health,
-               ingest, metrics, quality, regime, research, smartmoney,
+               ingest, kap, metrics, quality, regime, research, smartmoney,
                stockintel, stocks)
 
 PRESENTATION_RF = 0.40  # annual risk-free rate baked into dash tables
@@ -53,6 +53,10 @@ def update_raw(conn: sqlite3.Connection) -> None:
     ingest.update(fund_type="EMK")
     benchmarks.fetch_benchmarks(start="2024-01-01")
     evds.fetch_macro()
+    try:
+        _status(conn, "kap_holdings", kap.daily_update(conn))
+    except Exception as err:
+        print(f"  kap holdings skipped: {err}")
     stocks.update_registry(conn)
     stocks.update_prices(conn)
     classify.classify_all(conn)
