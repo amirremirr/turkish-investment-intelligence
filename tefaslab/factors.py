@@ -168,3 +168,22 @@ def all_factor_betas(conn: sqlite3.Connection, days: int = 252,
     meta = pd.read_sql_query(
         "SELECT code, title, category FROM funds", conn).set_index("code")
     return out.join(meta)
+
+
+def category_diagnostics(conn: sqlite3.Connection,
+                         min_obs: int = 126) -> pd.DataFrame:
+    """Does the factor model make economic sense per category? Mean
+    betas and fit by category — a sanity table (equity should load on
+    BIST, foreign on Nasdaq, gold funds on gold, money market on
+    nothing)."""
+    betas = all_factor_betas(conn, min_obs=min_obs)
+    agg = betas.groupby("category").agg(
+        funds=("r_squared", "size"),
+        mean_r2=("r_squared", "mean"),
+        beta_bist=("beta_bist100", "mean"),
+        beta_gold=("beta_gold_try", "mean"),
+        beta_usd=("beta_usdtry", "mean"),
+        beta_nasdaq=("beta_nasdaq_try", "mean"),
+        pct_sig_alpha=("alpha_t", lambda s: (s.abs() > 2).mean()),
+    ).round(3)
+    return agg.sort_values("funds", ascending=False)

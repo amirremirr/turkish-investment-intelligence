@@ -7,9 +7,9 @@
 3. closet_index — are "active" equity funds actually active?
    (beta/R^2/alpha triage)
 
-Caveats printed with results: OLS t-stats assume iid errors; overlapping
-multi-day horizons inflate them (no Newey-West here yet). Treat |t| > 3
-as interesting, not |t| > 2.
+Standard errors are Newey-West (HAC): overlapping multi-day horizons
+induce serial correlation in residuals, so the lag length defaults to
+the overlap length. Both naive and NW t-stats are reported.
 """
 
 from __future__ import annotations
@@ -23,13 +23,15 @@ from . import benchmarks as bm
 from . import factors, flows, metrics
 
 
-def _ols(y: np.ndarray, x: np.ndarray) -> dict:
-    """Simple univariate OLS with intercept; returns beta, t, r2, n."""
+def _ols(y: np.ndarray, x: np.ndarray, nw_lags: int = 0) -> dict:
+    """Univariate OLS with intercept. Returns beta, naive t, Newey-West
+    t (Bartlett kernel, `nw_lags` lags), r2, n."""
     mask = np.isfinite(y) & np.isfinite(x)
     y, x = y[mask], x[mask]
     n = len(y)
     if n < 30:
-        return {"beta": np.nan, "t_stat": np.nan, "r2": np.nan, "n": n}
+        return {"beta": np.nan, "t_stat": np.nan, "nw_t": np.nan,
+                "r2": np.nan, "n": n}
     X = np.column_stack([np.ones(n), x])
     coef, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
     resid = y - X @ coef
@@ -38,7 +40,20 @@ def _ols(y: np.ndarray, x: np.ndarray) -> dict:
     xvar = ((x - x.mean()) ** 2).sum()
     se = np.sqrt(s2 / xvar)
     r2 = 1 - resid.var() / y.var() if y.var() > 0 else np.nan
+
+    # Newey-West on the slope: sandwich (X'X)^-1 S (X'X)^-1
+    xtx_inv = np.linalg.inv(X.T @ X)
+    u = X * resid[:, None]                      # n x 2 score
+    S = u.T @ u
+    L = max(int(nw_lags), 0)
+    for lag in range(1, L + 1):
+        w = 1 - lag / (L + 1)                   # Bartlett weight
+        gamma = u[lag:].T @ u[:-lag]
+        S += w * (gamma + gamma.T)
+    cov = xtx_inv @ S @ xtx_inv
+    nw_se = np.sqrt(cov[1, 1])
     return {"beta": float(coef[1]), "t_stat": float(coef[1] / se),
+            "nw_t": float(coef[1] / nw_se) if nw_se > 0 else np.nan,
             "r2": float(r2), "n": n}
 
 
@@ -80,9 +95,29 @@ def flow_predictability(conn: sqlite3.Connection,
     out = []
     for h in horizons:
         fwd = (bist.shift(-h) / bist - 1).reindex(flow.index)
-        res = _ols(fwd.to_numpy() * 100, flow.to_numpy())
+        res = _ols(fwd.to_numpy() * 100, flow.to_numpy(), nw_lags=h)
         out.append({"horizon_days": h, **res})
     return pd.DataFrame(out).set_index("horizon_days")
+
+
+def flow_predictability_oos(conn: sqlite3.Connection,
+                            category: str = "Equity Turkey",
+                            horizon: int = 21,
+                            split: str = "2026-01-01") -> pd.DataFrame:
+    """Out-of-sample check: estimate on the training window, verify the
+    sign and magnitude hold in the holdout."""
+    flow = _category_flow_series(conn, category)
+    bist = bm.load_series(conn, "bist100")
+    fwd = ((bist.shift(-horizon) / bist - 1) * 100).reindex(flow.index)
+    cut = pd.Timestamp(split)
+    rows = []
+    for label, mask in [("train (pre-split)", flow.index < cut),
+                        ("test (post-split)", flow.index >= cut),
+                        ("full sample", flow.index.notna())]:
+        res = _ols(fwd[mask].to_numpy(), flow[mask].to_numpy(),
+                   nw_lags=horizon)
+        rows.append({"sample": label, **res})
+    return pd.DataFrame(rows).set_index("sample")
 
 
 def flow_predictability_by_category(
@@ -120,7 +155,8 @@ def performance_chasing(conn: sqlite3.Connection,
             .resample("W").last().shift(1)  # last week's trailing return
         aligned = pd.concat([weekly_flow.rename("flow"),
                              (trailing * 100).rename("ret")], axis=1).dropna()
-        res = _ols(aligned["flow"].to_numpy(), aligned["ret"].to_numpy())
+        res = _ols(aligned["flow"].to_numpy(), aligned["ret"].to_numpy(),
+                   nw_lags=max(lb // 5, 1))  # weekly data: lags in weeks
         out.append({"lookback_days": lb, **res})
     return pd.DataFrame(out).set_index("lookback_days")
 

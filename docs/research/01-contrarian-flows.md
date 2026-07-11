@@ -7,23 +7,34 @@ predict subsequent BIST100 returns?
 2026, ~605 trading days), computed as Δshares × NAV and normalized by
 category AUM; forward BIST100 returns at 1/5/10/21-day horizons.
 
-**Method.** `R_{t+1:t+h} = α + β·Flow_t + ε` (OLS; see
-[METHODOLOGY §7](../METHODOLOGY.md#7-regression-methodology-research-studies)
-for caveats — overlapping horizons inflate t-statistics).
+**Method.** `R_{t+1:t+h} = α + β·Flow_t + ε`, Newey–West (Bartlett)
+standard errors with lag = horizon. Restructuring rows (|NAV move| >
+50%) excluded from flows (see METHODOLOGY §4).
 
 ## Results
 
-| Horizon (days) | β | t | R² |
-|---|---|---|---|
-| 1 | −0.21 | −1.9 | 0.006 |
-| 5 | −0.24 | −0.9 | 0.001 |
-| 10 | −0.60 | −1.7 | 0.004 |
-| 21 | **−1.08** | **−2.1** | 0.007 |
+| Horizon (days) | β | naive t | **NW t** | R² |
+|---|---|---|---|---|
+| 1 | −0.22 | −1.9 | −2.2 | 0.006 |
+| 5 | −0.26 | −0.9 | −1.1 | 0.001 |
+| 10 | −0.56 | −1.5 | −1.7 | 0.004 |
+| 21 | **−1.11** | −2.0 | **−2.5** | 0.007 |
 
 β is negative at every horizon: a 1%-of-AUM inflow into equity funds is
 associated with ~1.1pp *lower* BIST100 returns over the following
 month. Explained variance is small (<1%) — a behavioral tilt, not a
 trading signal.
+
+**Out-of-sample** (train 2024–2025, test 2026):
+
+| Sample | β (21d) | NW t | n |
+|---|---|---|---|
+| Train (2024–25) | −1.09 | −2.3 | 498 |
+| Test (2026) | −1.29 | −0.9 | 108 |
+
+The holdout shows the same sign and comparable magnitude; the test
+t-statistic is weak, as expected from ~5 months of data — sign
+consistency is the claim, not holdout significance.
 
 ## Robustness
 

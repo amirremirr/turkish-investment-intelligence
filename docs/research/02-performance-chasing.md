@@ -12,11 +12,13 @@ already happened — and at what memory horizon?
 
 ## Results
 
-| Trailing-return lookback | β | t | R² |
-|---|---|---|---|
-| 5 days | 0.011 | 1.2 | 0.010 |
-| 21 days | 0.007 | 1.9 | 0.028 |
-| 63 days | **0.006** | **3.0** | **0.070** |
+(Newey–West standard errors; restructuring-guarded flows)
+
+| Trailing-return lookback | β | naive t | **NW t** | R² |
+|---|---|---|---|---|
+| 5 days | 0.011 | 1.3 | 1.9 | 0.012 |
+| 21 days | 0.008 | 2.1 | 2.4 | 0.034 |
+| 63 days | **0.006** | 3.3 | **4.3** | **0.083** |
 
 Flows do not respond to last week's returns. They respond to the
 trailing *quarter*: **Turkish mutual fund investors exhibit medium-term

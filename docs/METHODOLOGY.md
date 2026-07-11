@@ -120,11 +120,18 @@ in until an expense-ratio source is added.
 
 ## 7. Regression methodology (research studies)
 
-- Univariate OLS with intercept; β, t-statistic, R², n reported.
-- Overlapping multi-day horizons inflate t-statistics (no Newey-West
-  correction yet) — findings are interpreted at |t| > 3, not |t| > 2.
+- Univariate OLS with intercept; β, naive t, **Newey–West t** (Bartlett
+  kernel, lag = overlap length), R², n reported.
+- Out-of-sample protocol: estimate on 2024–2025, verify sign and
+  magnitude on the 2026 holdout (`research flows-oos`).
 - Regime splits use trailing 21-day BIST100 volatility vs its median.
-- Flow series are normalized by category AUM (% of AUM per day).
+- Flow series are normalized by category AUM (% of AUM per day) and
+  restructuring-guarded (§4).
+- **Cash-carry caveat**: the factor model has no risk-free factor, so
+  the intercept of deposit-like funds is dominated by interest carry —
+  100% of money-market funds show "significant alpha" by construction.
+  Interpret alpha within category (`quality --within-category`), never
+  across cash-like and risky products.
 
 ## 8. Known limitations
 

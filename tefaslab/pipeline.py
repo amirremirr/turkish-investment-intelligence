@@ -49,6 +49,7 @@ def update_raw(conn: sqlite3.Connection) -> None:
     """Refresh all raw data sources (network calls)."""
     print("== raw data ==")
     ingest.update(fund_type="YAT")
+    ingest.update(fund_type="EMK")
     benchmarks.fetch_benchmarks(start="2024-01-01")
     stocks.update_registry(conn)
     stocks.update_prices(conn)

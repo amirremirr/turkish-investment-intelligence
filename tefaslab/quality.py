@@ -78,19 +78,28 @@ def _components(conn: sqlite3.Connection, rf: float, min_aum: float,
     return base
 
 
+def _rank(series: pd.Series, groups: pd.Series | None) -> pd.Series:
+    """Percentile rank, optionally within category groups so that a
+    money-market fund is never scored against an equity fund."""
+    if groups is None:
+        return series.rank(pct=True)
+    return series.groupby(groups).rank(pct=True)
+
+
 def skill_scores(conn: sqlite3.Connection, rf: float = 0.0,
                  min_aum: float = 100e6, min_investors: int = 500,
-                 min_obs: int = 126,
+                 min_obs: int = 126, within_category: bool = False,
                  components: pd.DataFrame | None = None) -> pd.DataFrame:
     c = components if components is not None \
         else _components(conn, rf, min_aum, min_investors, min_obs)
+    g = c["category"] if within_category else None
     pct = pd.DataFrame({
         # rank the t-statistic, not raw alpha: a noisy 100% alpha on 3
         # months of a tiny fund must not outrank a precise 15% alpha
-        "alpha": c["alpha_t"].rank(pct=True),
-        "consistency": c["consistency"].rank(pct=True),
-        "downside": c["max_dd"].rank(pct=True),
-        "independence": (1 - c["r_squared"]).rank(pct=True),
+        "alpha": _rank(c["alpha_t"], g),
+        "consistency": _rank(c["consistency"], g),
+        "downside": _rank(c["max_dd"], g),
+        "independence": _rank(1 - c["r_squared"], g),
     })
     score = sum(pct[k].fillna(0.5) * w for k, w in SKILL_WEIGHTS.items()) * 100
     out = c[["title", "category", "ret_1y", "sharpe", "max_dd",
@@ -102,16 +111,17 @@ def skill_scores(conn: sqlite3.Connection, rf: float = 0.0,
 
 def suitability_scores(conn: sqlite3.Connection, rf: float = 0.0,
                        min_aum: float = 100e6, min_investors: int = 500,
-                       min_obs: int = 126,
+                       min_obs: int = 126, within_category: bool = False,
                        components: pd.DataFrame | None = None) -> pd.DataFrame:
     c = components if components is not None \
         else _components(conn, rf, min_aum, min_investors, min_obs)
+    g = c["category"] if within_category else None
     pct = pd.DataFrame({
-        "performance": c["sharpe"].rank(pct=True),
-        "drawdown": c["max_dd"].rank(pct=True),
-        "aum_stability": (-c["flow_volatility"]).rank(pct=True),
-        "liquidity": c["investors"].rank(pct=True),
-        "size": c["aum"].rank(pct=True),
+        "performance": _rank(c["sharpe"], g),
+        "drawdown": _rank(c["max_dd"], g),
+        "aum_stability": _rank(-c["flow_volatility"], g),
+        "liquidity": _rank(c["investors"], g),
+        "size": _rank(c["aum"], g),
     })
     score = sum(pct[k].fillna(0.5) * w
                 for k, w in SUITABILITY_WEIGHTS.items()) * 100

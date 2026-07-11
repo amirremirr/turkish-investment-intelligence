@@ -172,8 +172,10 @@ def cmd_quality(args) -> None:
     fn = {"skill": quality.skill_scores,
           "suitability": quality.suitability_scores,
           "combined": quality.combined_scores}[args.view]
+    kwargs = {} if args.view == "combined" \
+        else {"within_category": args.within_category}
     table = fn(conn, rf=args.rf, min_aum=args.min_aum * 1e6,
-               min_investors=args.min_investors)
+               min_investors=args.min_investors, **kwargs)
     conn.close()
     if args.category:
         table = table[table["category"].str.contains(args.category,
@@ -262,6 +264,15 @@ def cmd_research(args) -> None:
         print("Flow -> future BIST return (21d horizon) by category:\n")
         print(research.flow_predictability_by_category(conn)
               .round(3).to_string())
+    elif args.study == "flows-oos":
+        print(f"Out-of-sample validation ({args.category}, 21d horizon, "
+              "split 2026-01-01):\n")
+        print(research.flow_predictability_oos(conn, args.category)
+              .round(3).to_string())
+    elif args.study == "diagnostics":
+        print("Factor-model sanity by category "
+              "(mean betas should match mandates):\n")
+        print(factors.category_diagnostics(conn).to_string())
     elif args.study == "chasing":
         print(f"Do investors chase past {args.category} returns?\n"
               "(beta = weekly flow %AUM per 100% trailing return)\n")
@@ -384,6 +395,9 @@ def main() -> None:
                        help="Manager Skill / Investor Suitability scores")
     p.add_argument("--view", choices=["combined", "skill", "suitability"],
                    default="combined")
+    p.add_argument("--within-category", action="store_true",
+                   help="percentile-rank within each category instead of "
+                        "across the whole universe")
     p.add_argument("--n", type=int, default=20)
     p.add_argument("--rf", type=float, default=0.0)
     p.add_argument("--category")
@@ -425,7 +439,8 @@ def main() -> None:
 
     p = sub.add_parser("research", help="run a research study")
     p.add_argument("study", choices=["flows", "flows-by-category",
-                                     "chasing", "closet"])
+                                     "flows-oos", "chasing", "closet",
+                                     "diagnostics"])
     p.add_argument("--category", default="Equity Turkey")
     p.add_argument("--regime", choices=["high_vol", "low_vol"],
                    help="volatility-regime subsample (flows study)")

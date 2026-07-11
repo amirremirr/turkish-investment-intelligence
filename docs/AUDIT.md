@@ -99,12 +99,27 @@ filters when comparing like with like.
 - No secret-like keywords in the codebase (no API keys exist yet; the
   EVDS key, when added, goes in an env var — never in code).
 
-## 6. Open items (acknowledged, prioritized)
+## 6. Open items
 
-1. **Ingest EMK pension funds** — half the market, one command away.
-2. Newey–West standard errors for research regressions; residual
-   diagnostics.
-3. Out-of-sample split for the flow studies (train 2024–25, test 2026).
-4. Category-normalized score variants.
+Resolved since the audit (same day):
+
+1. ~~Ingest EMK pension funds~~ — backfilled 2024→present; nightly
+   pipeline updates both YAT and EMK.
+2. ~~Newey–West standard errors~~ — implemented (Bartlett kernel, lag =
+   overlap); findings *strengthened*: contrarian flows NW t = −2.5,
+   performance chasing NW t = 4.3.
+3. ~~Out-of-sample split~~ — `research flows-oos`: 2026 holdout shows
+   the same sign and magnitude (β −1.29 vs −1.09 trained).
+4. ~~Category-normalized scoring~~ — `quality --within-category`; also
+   added `research diagnostics` (per-category factor sanity: equity
+   loads on BIST 0.65, gold funds on gold 0.93, money market on
+   nothing). It exposed the **cash-carry caveat**: 100% of money-market
+   funds show "significant alpha" that is deposit interest, not skill —
+   documented in METHODOLOGY §7.
+
+Still open (prioritized):
+
 5. Fee data → net-of-fee closet-index "active value" metric.
 6. BIST holiday calendar for stock-data gap detection.
+7. Residual diagnostics (normality, heteroskedasticity) for the factor
+   model.
