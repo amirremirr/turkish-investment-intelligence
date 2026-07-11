@@ -45,6 +45,10 @@ python -m tefaslab stocks --sectors            # one-time sector tags
 
 # Fund classification (title rules + allocation fallback)
 python -m tefaslab classify
+
+# TCMB macro (CPI, policy rate, deposits) — needs EVDS_API_KEY in .env
+python -m tefaslab evds
+python -m tefaslab regime   # current regime + historical winners
 ```
 
 ## Analytics

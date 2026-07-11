@@ -89,16 +89,19 @@ def run_checks(conn: sqlite3.Connection) -> list[tuple[str, str, str]]:
         f"missing months: {missing}" if missing else
         f"{months.iloc[0]} .. {months.iloc[-1]} continuous")
 
-    # benchmarks present and fresh
+    # benchmarks present and fresh (monthly/weekly macro series publish
+    # with a lag and get their own, looser thresholds)
+    slow = {"cpi_index": 75, "deposit_3m": 21, "deposit_1y": 21}
     b = conn.execute(
         "SELECT series, MAX(date) FROM benchmarks GROUP BY series").fetchall()
     if not b:
         add(WARN, "benchmarks", "none loaded — run `benchmarks` command")
     else:
-        oldest = min(d for _, d in b)
-        age = (date.today() - date.fromisoformat(oldest)).days
-        add(OK if age <= 7 else WARN, "benchmark freshness",
-            f"{len(b)} series, oldest update {oldest}")
+        stale = [(s, d) for s, d in b
+                 if (date.today() - date.fromisoformat(d)).days
+                 > slow.get(s, 7)]
+        add(OK if not stale else WARN, "benchmark freshness",
+            f"{len(b)} series; stale: {stale or 'none'}")
 
     unclassified = conn.execute(
         "SELECT COUNT(*) FROM funds WHERE category IS NULL").fetchone()[0]

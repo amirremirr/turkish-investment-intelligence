@@ -17,9 +17,9 @@ import pandas as pd
 
 import sys
 
-from . import (benchmarks, classify, compare, db, factors, flows, health,
-               ingest, memo, metrics, pipeline, quality, report, research,
-               rolling, smartmoney, stocks)
+from . import (benchmarks, classify, compare, db, evds, factors, flows,
+               health, ingest, memo, metrics, pipeline, quality, regime,
+               report, research, rolling, smartmoney, stocks)
 
 
 def _parse_date(s: str) -> date:
@@ -194,6 +194,17 @@ def cmd_quality(args) -> None:
     if args.csv:
         table.to_csv(args.csv)
         print(f"\nSaved full table to {args.csv}")
+
+
+def cmd_evds(args) -> None:
+    counts = evds.fetch_macro()
+    print(f"Done: {counts}")
+
+
+def cmd_regime(args) -> None:
+    conn = db.connect()
+    print(regime.report(conn))
+    conn.close()
 
 
 def cmd_report(args) -> None:
@@ -406,6 +417,14 @@ def main() -> None:
     p.add_argument("--min-investors", type=int, default=500)
     p.add_argument("--csv")
     p.set_defaults(func=cmd_quality)
+
+    p = sub.add_parser("evds", help="fetch TCMB macro series (needs "
+                                    "EVDS_API_KEY in env or .env)")
+    p.set_defaults(func=cmd_evds)
+
+    p = sub.add_parser("regime",
+                       help="macro regime classification + winners")
+    p.set_defaults(func=cmd_regime)
 
     p = sub.add_parser("report",
                        help="generate the Monthly Intelligence Report")

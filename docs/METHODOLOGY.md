@@ -133,7 +133,25 @@ in until an expense-ratio source is added.
   Interpret alpha within category (`quality --within-category`), never
   across cash-like and risky products.
 
-## 8. Known limitations
+## 8. Macro regime engine
+
+TCMB EVDS series (cpi_index, policy_rate = CBRT average funding cost,
+deposit rates) classify the environment with explicit thresholds:
+
+| Dimension | Rule |
+|---|---|
+| Inflation | HIGH ≥ 40% yoy · ELEVATED 20–40% · MODERATE < 20%; trend from the previous month's yoy |
+| Rates | real rate (policy − yoy CPI): RESTRICTIVE > +5pp · NEUTRAL ±5pp · LOOSE < −5pp |
+| FX | 3m USDTRY change: STRESS > 8% · DRIFT 2–8% · STABLE < 2% |
+
+"Historical winners" are median monthly category fund returns within
+each regime bucket (nominal TRY). **Caveat**: the 2024–26 sample is
+almost entirely RESTRICTIVE months — regime comparisons will only
+become meaningful as the sample spans an easing cycle. CPI publishes
+with ~1 month lag; the real rate uses trailing, not expected,
+inflation.
+
+## 9. Known limitations
 
 1. **Sample**: Jan 2024 – present (~2.5 years). Findings are one
    regime's evidence, not universal laws.

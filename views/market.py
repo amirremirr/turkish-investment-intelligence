@@ -30,6 +30,28 @@ if br:
     c3.metric("Equity turnover", f"₺{br['turnover_bn_try']}B")
     c4.metric("Breadth date", br["date"])
 
+macro = s.get("macro_regime", {}).get("value", {})
+if macro:
+    st.divider()
+    st.subheader("Macro regime")
+    c1, c2, c3, c4 = st.columns(4)
+    if "inflation_yoy" in macro:
+        c1.metric("Inflation (yoy)", f"{macro['inflation_yoy']}%",
+                  macro.get("inflation_trend", ""),
+                  delta_color="inverse")
+    if "policy_rate" in macro:
+        c2.metric("Policy rate (CBRT funding)",
+                  f"{macro['policy_rate']}%")
+    if "real_rate" in macro:
+        c3.metric("Real rate", f"{macro['real_rate']:+.1f}pp",
+                  macro.get("rates", ""))
+    if "usdtry_3m_pct" in macro:
+        c4.metric("USDTRY 3m", f"{macro['usdtry_3m_pct']:+.1f}%",
+                  macro.get("fx", ""), delta_color="inverse")
+    st.caption(f"CPI as of {macro.get('inflation_asof', '?')} "
+               "(publication lag). Regime thresholds documented in "
+               "METHODOLOGY.")
+
 st.divider()
 
 metrics_tbl = dl.read_table("dash_metrics", index_col="code")

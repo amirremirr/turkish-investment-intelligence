@@ -76,9 +76,12 @@ Full command reference: [docs/USAGE.md](docs/USAGE.md)
 
 ## Status & roadmap
 
-Active. Next: KAP holdings parser (individual stock positions per fund —
-feasibility proven, unlocks true stock-selection attribution), TCMB EVDS
-macro layer (regime engine), needs-based fund screener, daily anomaly
-alerts, portfolio builder.
+Active. Done recently: institutional audit (with fixes), EMK pension
+funds, Newey–West + out-of-sample robustness, TCMB EVDS macro layer
+with a regime engine (inflation/rates/FX classification + historical
+category winners). Next: KAP holdings parser (individual stock
+positions per fund — feasibility proven, unlocks true stock-selection
+attribution), needs-based fund screener, daily anomaly alerts,
+portfolio builder.
 
 *Not investment advice. Built for research and education.*

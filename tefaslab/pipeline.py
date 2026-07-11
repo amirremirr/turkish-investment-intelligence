@@ -17,8 +17,9 @@ import sqlite3
 import time
 from datetime import datetime
 
-from . import (benchmarks, classify, db, factors, flows, health, ingest,
-               metrics, quality, research, smartmoney, stockintel, stocks)
+from . import (benchmarks, classify, db, evds, factors, flows, health,
+               ingest, metrics, quality, regime, research, smartmoney,
+               stockintel, stocks)
 
 PRESENTATION_RF = 0.40  # annual risk-free rate baked into dash tables
 
@@ -51,6 +52,7 @@ def update_raw(conn: sqlite3.Connection) -> None:
     ingest.update(fund_type="YAT")
     ingest.update(fund_type="EMK")
     benchmarks.fetch_benchmarks(start="2024-01-01")
+    evds.fetch_macro()
     stocks.update_registry(conn)
     stocks.update_prices(conn)
     classify.classify_all(conn)
@@ -112,6 +114,12 @@ def build_presentation(conn: sqlite3.Connection,
 
     _status(conn, "breadth", stockintel.breadth(conn))
     _status(conn, "market_snapshot", stockintel.market_snapshot(conn))
+    try:
+        _status(conn, "macro_regime",
+                {**regime.indicators(conn), **regime.classify(
+                    regime.indicators(conn))})
+    except Exception as err:
+        print(f"  regime skipped: {err}")
 
     counts = {t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
               for t in ("funds", "prices", "allocations", "stock_prices",
