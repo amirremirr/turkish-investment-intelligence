@@ -23,6 +23,8 @@ jobs:
           import importlib, pkgutil
           import tefaslab
           for m in pkgutil.iter_modules(tefaslab.__path__):
+              if m.name == "__main__":
+                  continue  # runs main() unconditionally; not importable standalone
               importlib.import_module(f"tefaslab.{m.name}")
               print("ok", m.name)
           EOF
