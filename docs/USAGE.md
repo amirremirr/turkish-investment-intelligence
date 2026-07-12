@@ -55,6 +55,9 @@ python -m tefaslab holdings scan --start 1604100 --count 500
 python -m tefaslab holdings parse --count 50
 python -m tefaslab holdings who ASELS    # which funds own it
 python -m tefaslab holdings fund IJZ     # a fund's full book
+python -m tefaslab holdings crowding     # most widely held stocks
+python -m tefaslab holdings active       # peer active share ranking
+python -m tefaslab holdings attrib IJZ   # stock-level attribution
 python -m tefaslab holdings stats
 ```
 

@@ -13,6 +13,7 @@ production ([tefaslab/kap.py](../tefaslab/kap.py)).*
 | Table parser (`parse_pdf_holdings`) | ✅ working — position-based row reconstruction; on the test fund: 89/89 holdings, 0 missing values, **weights sum to 98.1%** (rest is cash) |
 | `fund_holdings` table + `kap_disclosures` ledger | ✅ in the shared DB |
 | Queries: `holdings who ASELS`, `holdings fund IJZ`, `holdings stats` | ✅ CLI |
+| Analytics: `crowding` (breadth of ownership), `active` (peer active share), `attrib` (stock-level contribution) | ✅ [ownership.py](../tefaslab/ownership.py) — each reports its own universe size |
 | Nightly integration | ✅ pipeline scans forward from the id frontier (≤2,500 ids/night) and parses new reports |
 
 ## Upsides (why this is worth it)
@@ -56,6 +57,13 @@ production ([tefaslab/kap.py](../tefaslab/kap.py)).*
 7. Weight column semantics: three weight variants exist in the table
    (FPD/group/FTD); we store the fund-total-value weight. Values are
    nominal TRY at report date.
+8. **Active share is peer-relative, not index-relative** — official
+   BIST constituent weights aren't in the database, so `holdings
+   active` measures differentiation from the covered peer aggregate.
+9. **Attribution covers priced holdings only**: TR tickers have local
+   prices; foreign holdings (US/EU) land in the residual until foreign
+   price series are added. The output states explained-vs-actual
+   explicitly.
 
 ## What was established
 

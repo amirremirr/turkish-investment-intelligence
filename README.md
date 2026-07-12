@@ -31,10 +31,17 @@ This platform answers the questions professionals ask instead:
 | **Research** | reproducible studies with documented [methodology](docs/METHODOLOGY.md) |
 
 ```
-TEFAS · KAP · Yahoo  →  ETL (nightly, scheduled)  →  raw tables (SQLite)
-                     →  analytics engine  →  presentation tables
-                     →  dashboard · reports · research
+TEFAS · KAP · EVDS · Yahoo  →  ETL (nightly, GitHub Actions)
+   →  raw tables (SQLite)  →  analytics engine  →  presentation tables
+   →  terminal · reports · memos · research
 ```
+
+![Market overview](docs/screenshots/market.png)
+
+<p align="center">
+  <img src="docs/screenshots/stocks.png" width="49%" />
+  <img src="docs/screenshots/intelligence.png" width="49%" />
+</p>
 
 ## Main findings
 

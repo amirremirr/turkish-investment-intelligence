@@ -18,8 +18,9 @@ import pandas as pd
 import sys
 
 from . import (benchmarks, classify, compare, db, evds, factors, flows,
-               health, ingest, kap, memo, metrics, pipeline, quality,
-               regime, report, research, rolling, smartmoney, stocks)
+               health, ingest, kap, memo, metrics, ownership, pipeline,
+               quality, regime, report, research, rolling, smartmoney,
+               stocks)
 
 
 def _parse_date(s: str) -> date:
@@ -218,6 +219,26 @@ def cmd_holdings(args) -> None:
                          "GROUP BY status").fetchall()
         print(f"holdings rows: {n[0]:,} | funds: {n[1]} | periods: {n[2]}")
         print("disclosures:", dict(d))
+    elif args.action == "crowding":
+        t = ownership.crowding(conn)
+        print(f"period {t.attrs['period']} · "
+              f"{t.attrs['fund_universe']} covered funds\n")
+        print(t.drop(columns=["held_by"]).head(args.count)
+              .round(2).to_string(index=False))
+    elif args.action == "active":
+        t = ownership.peer_active_share(conn, args.arg)
+        print(f"period {t.attrs['period']} — active share vs "
+              "peer-aggregate portfolio (see docs)\n")
+        print(t.round(1).to_string())
+    elif args.action == "attrib":
+        t = ownership.stock_attribution(conn, args.arg)
+        print(f"{args.arg.upper()} — holdings of {t.attrs['period']}, "
+              "contribution over the following month")
+        print(f"fund NAV return: {t.attrs['fund_return_pct']}% · "
+              f"explained by priced holdings: {t.attrs['explained_pp']}pp\n")
+        print(t.head(15).round(2).to_string(index=False))
+        print("...")
+        print(t.tail(5).round(2).to_string(index=False))
     conn.close()
 
 
@@ -445,7 +466,8 @@ def main() -> None:
 
     p = sub.add_parser("holdings", help="KAP fund holdings pipeline")
     p.add_argument("action", choices=["scan", "parse", "who", "fund",
-                                      "stats"])
+                                      "stats", "crowding", "active",
+                                      "attrib"])
     p.add_argument("arg", nargs="?", help="ticker (who) / fund code (fund)")
     p.add_argument("--start", type=int, help="scan start id")
     p.add_argument("--count", type=int, default=100)
