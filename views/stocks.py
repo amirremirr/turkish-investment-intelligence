@@ -17,6 +17,27 @@ if dl.require(sect, "dash_sectors"):
             fmt[c] = (fmt[c] * 100).round(1)
         st.dataframe(fmt, use_container_width=True)
 
+live = dl.intraday_fresh()
+if live and live.get("movers"):
+    import pandas as pd
+    st.subheader(f"🔴 Live movers — {live['ts']} (delayed ~15 min)")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**Gainers**")
+        st.dataframe(pd.DataFrame(live["movers"]["gainers"]),
+                     use_container_width=True, hide_index=True)
+    with c2:
+        st.markdown("**Losers**")
+        st.dataframe(pd.DataFrame(live["movers"]["losers"]),
+                     use_container_width=True, hide_index=True)
+    with st.expander("Live turnover leaders / unusual volume"):
+        c1, c2 = st.columns(2)
+        c1.dataframe(pd.DataFrame(live["movers"]["turnover"]),
+                     use_container_width=True, hide_index=True)
+        c2.dataframe(pd.DataFrame(live["movers"]["unusual_volume"]),
+                     use_container_width=True, hide_index=True)
+    st.divider()
+
 movers = dl.read_table("dash_movers")
 if dl.require(movers, "dash_movers"):
     def board(name):

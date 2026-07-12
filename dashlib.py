@@ -79,6 +79,21 @@ def rf_caption() -> None:
                        "run `python -m tefaslab daily`.")
 
 
+def intraday_fresh(max_age_min: int = 25) -> dict | None:
+    """The intraday snapshot if it's recent enough to show, else None."""
+    from datetime import datetime
+    s = status()
+    intra = s.get("intraday", {}).get("value")
+    if not intra or "ts" not in intra:
+        return None
+    try:
+        age = (datetime.now()
+               - datetime.strptime(intra["ts"], "%Y-%m-%d %H:%M"))
+    except ValueError:
+        return None
+    return intra if age.total_seconds() < max_age_min * 60 else None
+
+
 # ---- sanctioned live (per-fund, milliseconds) ----
 
 @st.cache_data(ttl=3600)

@@ -13,7 +13,19 @@ br = s.get("breadth", {}).get("value", {})
 mood = s.get("risk_appetite", {}).get("value", {})
 counts = s.get("row_counts", {}).get("value", {})
 
-if snap:
+live = dl.intraday_fresh()
+if live and live.get("snapshot"):
+    cols = st.columns(len(live["snapshot"]) + 1)
+    for col, (label, v) in zip(cols, live["snapshot"].items()):
+        col.metric(f"🔴 {label}", f"{v['level']:,.1f}",
+                   f"{v['chg_1d'] * 100:+.2f}%")
+    lb = live.get("breadth", {})
+    cols[-1].metric("Adv / Dec (live)",
+                    f"{lb.get('advancers', '–')} / "
+                    f"{lb.get('decliners', '–')}")
+    st.caption(f"LIVE as of {live['ts']} (quotes delayed ~15 min; "
+               "refreshed every 15 min during BIST hours)")
+elif snap:
     cols = st.columns(len(snap))
     for col, (label, v) in zip(cols, snap.items()):
         col.metric(label, f"{v['level']:,.1f}",

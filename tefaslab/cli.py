@@ -18,9 +18,9 @@ import pandas as pd
 import sys
 
 from . import (benchmarks, classify, compare, db, evds, factors, flows,
-               health, ingest, kap, memo, metrics, ownership, pipeline,
-               quality, regime, report, research, rolling, smartmoney,
-               stocks)
+               health, ingest, intraday, kap, memo, metrics, ownership,
+               pipeline, quality, regime, report, research, rolling,
+               smartmoney, stocks)
 
 
 def _parse_date(s: str) -> date:
@@ -195,6 +195,10 @@ def cmd_quality(args) -> None:
     if args.csv:
         table.to_csv(args.csv)
         print(f"\nSaved full table to {args.csv}")
+
+
+def cmd_intraday(args) -> None:
+    print(intraday.refresh())
 
 
 def cmd_holdings(args) -> None:
@@ -463,6 +467,11 @@ def main() -> None:
     p.add_argument("--min-investors", type=int, default=500)
     p.add_argument("--csv")
     p.set_defaults(func=cmd_quality)
+
+    p = sub.add_parser("intraday",
+                       help="refresh live stock quotes/movers/breadth "
+                            "(15-min cadence; delayed quotes)")
+    p.set_defaults(func=cmd_intraday)
 
     p = sub.add_parser("holdings", help="KAP fund holdings pipeline")
     p.add_argument("action", choices=["scan", "parse", "who", "fund",

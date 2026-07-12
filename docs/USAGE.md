@@ -13,6 +13,9 @@ python -m tefaslab daily --skip-raw   # analytics only (~1 min)
 # Scheduled: Windows task "BIST-Daily-Pipeline", weekdays 18:30, via
 # scripts/run_daily.py (logs to logs/, one retry, toast on failure)
 
+# Intraday quotes (15-min cadence; scheduled task "BIST-Intraday")
+python -m tefaslab intraday
+
 # Dashboard — a pure viewer over the dash_* tables
 streamlit run app.py
 
