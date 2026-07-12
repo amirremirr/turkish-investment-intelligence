@@ -37,7 +37,14 @@ FULL_TABLES = ["funds", "stocks", "benchmarks", "fund_holdings",
 INCREMENTAL = {"prices": "date", "stock_prices": "date"}
 SKIP = {"allocations", "live_quotes"}
 
-CHUNK = 20_000
+# Read chunk: sidesteps a spurious numpy allocation bug on Windows when
+# pandas dtype-infers a single huge (1M+ row) object array.
+READ_CHUNK = 20_000
+# Write chunk: `to_sql(method="multi")` compiles chunksize x n_columns
+# parameters into ONE statement. Postgres caps bound parameters per
+# statement at 65535; 2,000 rows stays well under that even for our
+# widest table (dash_metrics, ~16 columns -> 32,000 params).
+WRITE_CHUNK = 2_000
 
 DDL_AFTER_INIT = [
     "ALTER TABLE prices ADD PRIMARY KEY (code, date)",
@@ -85,7 +92,7 @@ def publish(url: str | None = None, init: bool = False,
         except Exception:
             continue
         df.to_sql(name, engine, if_exists="replace", index=False,
-                  chunksize=CHUNK, method="multi")
+                  chunksize=WRITE_CHUNK, method="multi")
         stats[name] = len(df)
         print(f"  {name:<22} {len(df):>9,} rows (replace)")
 
@@ -105,12 +112,19 @@ def publish(url: str | None = None, init: bool = False,
         if last:
             q += f" WHERE {datecol} > ?"
             params = (last,)
-        df = pd.read_sql_query(q, src, params=params)
-        if len(df):
-            df.to_sql(name, engine, if_exists="append", index=False,
-                      chunksize=CHUNK, method="multi")
-        stats[name] = len(df)
-        print(f"  {name:<22} {len(df):>9,} rows (append since {last})")
+        # Read in chunks: pandas' dtype inference over a single huge
+        # object array (1M+ rows) hits a spurious numpy allocation bug
+        # on Windows (tries to coerce to complex128, "fails" to
+        # allocate a few MB). Smaller per-chunk arrays sidestep it, and
+        # it caps memory during the network write regardless.
+        total = 0
+        for chunk in pd.read_sql_query(q, src, params=params,
+                                       chunksize=READ_CHUNK):
+            chunk.to_sql(name, engine, if_exists="append", index=False,
+                        chunksize=WRITE_CHUNK, method="multi")
+            total += len(chunk)
+        stats[name] = total
+        print(f"  {name:<22} {total:>9,} rows (append since {last})")
 
     if init:
         with engine.begin() as c:

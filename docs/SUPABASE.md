@@ -45,6 +45,23 @@ which is how it's smoke-tested without network.
 
 Estimated serving footprint: ~150–250 MB — inside the free tier.
 
+## Status: live (2026-07-12)
+
+Project `turkish-investment-intelligence`, region **Frankfurt**
+(eu-central-1), connected via the **Session pooler** (Direct connection
+is IPv6-only and typically fails from home/office networks on the free
+tier). First full publish: 426s, exact row-count match with the source
+— 1,292,208 `prices`, 362,543 `stock_prices`, all 15 other tables.
+
+One bug found and fixed during the initial load: `to_sql(...,
+method="multi")` compiles `chunksize × n_columns` parameters into a
+single SQL statement, and Postgres caps bound parameters per statement
+at 65,535. The original `CHUNK=20,000` blew that limit on `prices` (6
+cols × 20,000 = 120,000 params), aborting the transaction. Fixed by
+splitting `READ_CHUNK` (20,000 — sidesteps a separate Windows/numpy
+dtype-inference bug on huge object arrays) from `WRITE_CHUNK` (2,000 —
+safe up to ~30 columns, comfortably covers every table here).
+
 ## Runbook
 
 1. Create a Supabase project → Settings → Database → copy the
