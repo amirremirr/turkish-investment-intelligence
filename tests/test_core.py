@@ -125,6 +125,34 @@ def test_beta_uses_lagged_benchmark(tmp_conn):
     assert out.loc["AAA", "beta"] == pytest.approx(1.0, abs=0.05)
 
 
+# ------------------------------------------------------ publisher
+
+def test_publisher_roundtrip(tmp_path, tmp_conn):
+    """Publish from a small SQLite source to a sqlite:/// target —
+    exercises the exact SQLAlchemy path used for Supabase Postgres."""
+    from tefaslab import publish as pub
+    tmp_conn.execute("INSERT INTO funds VALUES ('AAA','T','YAT','Equity "
+                     "Turkey')")
+    tmp_conn.executemany(
+        "INSERT INTO prices VALUES (?,?,?,?,?,?)",
+        [("AAA", f"2025-01-{d:02d}", 10.0, 1, 1, 10) for d in (1, 2, 3)])
+    tmp_conn.commit()
+    src_path = tmp_path / "test.db"          # tmp_conn's file
+    target = f"sqlite:///{tmp_path / 'serving.db'}"
+    stats = pub.publish(url=target, db_path=src_path)
+    assert stats["funds"] == 1
+    assert stats["prices"] == 3
+    # second run must be incremental: zero new price rows
+    stats2 = pub.publish(url=target, db_path=src_path)
+    assert stats2["prices"] == 0
+    # append a new day -> only it is shipped
+    tmp_conn.execute("INSERT INTO prices VALUES "
+                     "('AAA','2025-01-04',11,1,1,11)")
+    tmp_conn.commit()
+    stats3 = pub.publish(url=target, db_path=src_path)
+    assert stats3["prices"] == 1
+
+
 # ------------------------------------------------------- KAP parser
 
 def test_kap_parser_on_fixture():

@@ -19,8 +19,8 @@ import sys
 
 from . import (benchmarks, classify, compare, db, evds, factors, flows,
                health, ingest, intraday, kap, memo, metrics, ownership,
-               pipeline, quality, regime, report, research, rolling,
-               smartmoney, stocks)
+               pipeline, publish, quality, regime, report, research,
+               rolling, smartmoney, stocks)
 
 
 def _parse_date(s: str) -> date:
@@ -195,6 +195,11 @@ def cmd_quality(args) -> None:
     if args.csv:
         table.to_csv(args.csv)
         print(f"\nSaved full table to {args.csv}")
+
+
+def cmd_publish(args) -> None:
+    stats = publish.publish(url=args.url, init=args.init)
+    print(f"Done: {stats}")
 
 
 def cmd_intraday(args) -> None:
@@ -467,6 +472,14 @@ def main() -> None:
     p.add_argument("--min-investors", type=int, default=500)
     p.add_argument("--csv")
     p.set_defaults(func=cmd_quality)
+
+    p = sub.add_parser("publish",
+                       help="sync serving tables to Supabase Postgres "
+                            "(needs SUPABASE_DB_URL)")
+    p.add_argument("--url", help="override connection URL")
+    p.add_argument("--init", action="store_true",
+                   help="also create primary keys/indexes (first run)")
+    p.set_defaults(func=cmd_publish)
 
     p = sub.add_parser("intraday",
                        help="refresh live stock quotes/movers/breadth "

@@ -139,6 +139,13 @@ def run(skip_raw: bool = False, rf: float = PRESENTATION_RF) -> int:
     if not skip_raw:
         update_raw(conn)
     build_presentation(conn, rf=rf)
+    try:
+        from . import publish as pub
+        stats = pub.publish()
+        if stats:
+            _status(conn, "supabase_publish", stats)
+    except Exception as err:
+        print(f"  publish skipped: {err}")
     print(f"\npipeline done in {time.perf_counter() - t0:.0f}s")
     print("\n== health ==")
     code = health.report(conn)

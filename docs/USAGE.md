@@ -16,6 +16,11 @@ python -m tefaslab daily --skip-raw   # analytics only (~1 min)
 # Intraday quotes (15-min cadence; scheduled task "BIST-Intraday")
 python -m tefaslab intraday
 
+# Publish serving tables to Supabase Postgres (SUPABASE_DB_URL in .env;
+# runs automatically at the end of `daily` when the URL is set)
+python -m tefaslab publish --init   # first run: creates keys/indexes
+python -m tefaslab publish          # incremental sync
+
 # Dashboard — a pure viewer over the dash_* tables
 streamlit run app.py
 

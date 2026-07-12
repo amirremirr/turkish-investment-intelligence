@@ -18,10 +18,11 @@ strengths.*
 
 ## Weaknesses (open, prioritized)
 
-1. **Infrastructure**: SQLite single-writer. ~~Windows-centric ops~~ —
-   the pipeline now runs on GitHub Actions (Linux, scheduled, DB
-   persisted via cache + artifact backups); Windows Task Scheduler is
-   the legacy/local option. Multi-user serving still needs Postgres.
+1. **Infrastructure**: SQLite single-writer for compute (by design —
+   see [SUPABASE.md](SUPABASE.md)). ~~Windows-centric ops~~ — pipeline
+   runs on GitHub Actions. ~~No multi-user serving path~~ — a curated
+   serving copy publishes to Supabase Postgres after each pipeline run
+   (REST/auth-ready); the Next.js frontend remains future work.
 2. **Testing depth**: unit tests now cover the critical logic (lag
    convention, flow guard, classifier, OLS, KAP parser), but coverage
    is thin elsewhere; no integration tests against live APIs.
