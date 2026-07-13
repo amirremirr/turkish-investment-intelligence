@@ -34,4 +34,6 @@ jobs:
           fi
           echo "SUPABASE_DB_URL is present (${#SUPABASE_DB_URL} chars)"
       - run: pip install pandas numpy yfinance sqlalchemy psycopg2-binary
-      - run: python -m tefaslab intraday-cloud
+      # run the module directly (not `tefaslab intraday-cloud` via the
+      # CLI, which eagerly imports the whole package incl. pdfplumber)
+      - run: python -m tefaslab.intraday_cloud

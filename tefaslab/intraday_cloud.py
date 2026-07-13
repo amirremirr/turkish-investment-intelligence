@@ -142,3 +142,12 @@ def refresh(batch: int = 200) -> dict:
                 timespec="seconds")})
     engine.dispose()
     return {"ts": now, "quotes": len(quotes), **breadth}
+
+
+if __name__ == "__main__":
+    # Direct entry point so the cloud cron can run
+    #   python -m tefaslab.intraday_cloud
+    # without importing tefaslab.cli, which eagerly pulls in the whole
+    # package (kap/pdfplumber, report/tabulate, …) that this job doesn't
+    # need. Keeps the CI install minimal and fast.
+    print(refresh())
