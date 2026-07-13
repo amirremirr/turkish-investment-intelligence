@@ -206,6 +206,13 @@ export async function getMarketAggregate(): Promise<{
   };
 }
 
+export async function getHoldingsCoverage(): Promise<number> {
+  const rows = await sql`
+    SELECT COUNT(DISTINCT code) AS n FROM fund_holdings
+    WHERE period = (SELECT MAX(period) FROM fund_holdings)`;
+  return Number(rows[0].n);
+}
+
 export async function getCrowding(
   limit = 20
 ): Promise<
@@ -217,12 +224,12 @@ export async function getCrowding(
            COUNT(*) AS n_funds,
            AVG(h.weight_pct) AS avg_weight
     FROM fund_holdings h
-    LEFT JOIN stocks s ON s.ticker = h.ticker
+    JOIN stocks s ON s.ticker = h.ticker      -- real BIST equities only
     WHERE h.period = (SELECT MAX(period) FROM fund_holdings)
-      AND h.ticker IS NOT NULL
+      AND h.weight_pct IS NOT NULL AND h.weight_pct > 0
     GROUP BY h.ticker
     HAVING COUNT(*) >= 2
-    ORDER BY COUNT(*) DESC, AVG(h.weight_pct) DESC NULLS LAST
+    ORDER BY COUNT(*) DESC, AVG(h.weight_pct) DESC
     LIMIT ${limit}`;
   return rows.map((r) => ({
     ticker: r.ticker,

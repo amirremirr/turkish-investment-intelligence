@@ -12,13 +12,20 @@ const globalForDb = globalThis as unknown as {
   sql?: ReturnType<typeof postgres>;
 };
 
+// Use the Supabase TRANSACTION pooler (port 6543 in the URL) — it
+// multiplexes many client connections and is built for serverless.
+// A small per-process pool (5) lets a page's concurrent Promise.all
+// queries each grab a connection instead of deadlocking on one; the
+// pooler handles the aggregate count. (max: 1 caused multi-query pages
+// to hang; the session pooler on 5432 caps clients at 15 and is the
+// wrong mode here.)
 export const sql =
   globalForDb.sql ??
   postgres(url, {
     ssl: "require",
-    prepare: false, // safe with Supabase's connection pooler
-    max: 3,
-    idle_timeout: 20,
+    prepare: false, // required for the transaction pooler
+    max: 5,
+    idle_timeout: 10,
     connect_timeout: 15,
   });
 

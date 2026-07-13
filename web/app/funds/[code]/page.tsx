@@ -1,11 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import {
-  getFund,
-  getFundNav,
-  getFundHoldings,
-  getFundCodes,
-} from "@/lib/queries";
+import { getFund, getFundNav, getFundHoldings } from "@/lib/queries";
 import { Card, Stat, Delta, SectionTitle, Bar } from "@/components/ui";
 import { Sparkline } from "@/components/sparkline";
 import { pct, pctPoints, num, tryBn, intFmt, signClass } from "@/lib/format";
@@ -13,9 +8,13 @@ import { pct, pctPoints, num, tryBn, intFmt, signClass } from "@/lib/format";
 export const revalidate = 3600;
 export const dynamicParams = true;
 
-export async function generateStaticParams() {
-  const codes = await getFundCodes(60);
-  return codes.map((code) => ({ code }));
+// Render fund pages on first request and cache them (ISR), rather than
+// prerendering hundreds at build time — the Supabase pooler caps
+// concurrent connections, and a build that opens one per fund exhausts
+// it (locally and on Vercel). On-demand + revalidate is both robust and
+// still fast after the first hit.
+export function generateStaticParams() {
+  return [];
 }
 
 export async function generateMetadata({

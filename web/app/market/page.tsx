@@ -2,6 +2,7 @@ import {
   getCategoryFlows,
   getSectors,
   getCrowding,
+  getHoldingsCoverage,
   getStatus,
 } from "@/lib/queries";
 import { Card, SectionTitle, Bar, Stat } from "@/components/ui";
@@ -17,10 +18,11 @@ type RiskAppetite = {
 };
 
 export default async function MarketPage() {
-  const [flows, sectors, crowding, status] = await Promise.all([
+  const [flows, sectors, crowding, coverage, status] = await Promise.all([
     getCategoryFlows(),
     getSectors(),
     getCrowding(20),
+    getHoldingsCoverage(),
     getStatus(),
   ]);
   const mood = (status.risk_appetite ?? {}) as RiskAppetite;
@@ -110,8 +112,10 @@ export default async function MarketPage() {
       </div>
 
       <Card>
-        <SectionTitle hint="most widely held stocks across covered funds">
-          Crowding
+        <SectionTitle
+          hint={`${coverage} funds covered so far · grows nightly`}
+        >
+          Most-held stocks
         </SectionTitle>
         {crowding.length === 0 ? (
           <p className="text-sm text-muted">
