@@ -61,6 +61,16 @@ def require(df: pd.DataFrame, name: str) -> bool:
     return True
 
 
+def auto_refresh(seconds: int = 60) -> None:
+    """Reload the page periodically so live-data pages (Market, Stocks)
+    pick up new intraday writes without a manual F5. Streamlit reruns
+    a script only on user interaction or reload — never on its own
+    when the underlying database changes — so pages showing 'live'
+    data need this to actually behave live."""
+    st.markdown(f'<meta http-equiv="refresh" content="{seconds}">',
+               unsafe_allow_html=True)
+
+
 def rf_caption() -> None:
     s = status()
     rf = s.get("presentation_rf", {}).get("value", 0.40)

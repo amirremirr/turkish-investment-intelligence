@@ -6,6 +6,7 @@ import dashlib as dl
 st.title("🌍 Market Overview")
 st.caption("*What is happening in Turkey today?*")
 dl.rf_caption()
+dl.auto_refresh(60)
 
 s = dl.status()
 snap = s.get("market_snapshot", {}).get("value", {})

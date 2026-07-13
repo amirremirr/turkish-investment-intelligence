@@ -5,6 +5,7 @@ import dashlib as dl
 
 st.title("📈 Stocks")
 st.caption("*What is moving in the stock market?*")
+dl.auto_refresh(60)
 
 sect = dl.read_table("dash_sectors", index_col="sector")
 if dl.require(sect, "dash_sectors"):
