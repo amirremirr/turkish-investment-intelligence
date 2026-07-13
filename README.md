@@ -78,6 +78,7 @@ Full command reference: [docs/USAGE.md](docs/USAGE.md)
 - [Architecture](docs/ARCHITECTURE.md) — ETL design, layers, operations
 - [Methodology](docs/METHODOLOGY.md) — every metric defined, with limitations
 - [Audit](docs/AUDIT.md) — institutional-readiness audit: what was checked, what was found, what was fixed
+- [Monitoring](docs/MONITORING.md) — how failures are caught and surfaced (daily health monitor + GitHub alerts)
 - [SWOT](docs/SWOT.md) — honest self-assessment: weaknesses, threats, and mitigations
 - [KAP holdings](docs/KAP_HOLDINGS.md) — the stock-level holdings pipeline: status, upsides, limitations
 - [Data dictionary](docs/DATA_DICTIONARY.md) — every table and column

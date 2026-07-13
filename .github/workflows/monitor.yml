@@ -1,0 +1,53 @@
+name: Health monitor
+
+# Watches the whole serving chain (Supabase data freshness, row-count
+# sanity, pipeline recency, intraday). On any hard failure it opens (or
+# comments on) a GitHub Issue — which notifies you — and fails the run,
+# which also triggers GitHub's built-in failure email.
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # daily 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: health-monitor
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      GH_TOKEN: ${{ github.token }}
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install sqlalchemy psycopg2-binary
+      - name: Run health checks
+        run: |
+          set -o pipefail
+          python scripts/health_cloud.py | tee health.txt
+
+      - name: Open or update issue on failure
+        if: failure()
+        run: |
+          TITLE="🔴 System health check failed"
+          RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          BODY=$'A scheduled health check failed.\n\n```\n'"$(cat health.txt 2>/dev/null || echo 'no report produced — the check errored before output')"$'\n```\n\nRun: '"$RUN_URL"
+          NUM=$(gh issue list --state open --search "$TITLE in:title" \
+                  --json number --jq '.[0].number // empty' 2>/dev/null || true)
+          if [ -n "$NUM" ]; then
+            echo "commenting on existing issue #$NUM"
+            gh issue comment "$NUM" --body "$BODY"
+          else
+            echo "opening a new issue"
+            gh issue create --title "$TITLE ($(date -u +%F))" --body "$BODY"
+          fi
