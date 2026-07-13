@@ -86,11 +86,15 @@ presentation tables by a scheduled nightly pipeline.
   [scripts/run_daily.py](../scripts/run_daily.py) (logs to `logs/`, one
   retry, desktop notification on failure). Run either the cloud or the
   local scheduler, not both — they would maintain divergent databases.
-- **Intraday layer** (`python -m tefaslab intraday`, local task
-  "BIST-Intraday", every 15 min during BIST hours): refreshes delayed
-  quotes (~15 min lag) for all tickers into `live_quotes` +
-  `system_status['intraday']` — live snapshot, breadth, movers on the
-  dashboard. Provisional data never touches the clean daily tables.
+- **Intraday layer** (every 15 min during BIST hours): refreshes
+  delayed quotes (~15 min lag) into `system_status['intraday']` — live
+  snapshot, breadth, movers. Runs in the **cloud** via GitHub Actions
+  ([intraday.yml](../.github/workflows/intraday.yml), `tefaslab
+  intraday-cloud`) writing straight to Supabase, so the public web app
+  shows the live view without anything running on a local machine.
+  (`tefaslab intraday` still exists to write the same data to local
+  SQLite for the Streamlit dashboard.) Provisional data never touches
+  the clean daily tables.
   **Update-frequency ceiling by source**: stocks/FX/indices can go
   15-min; KAP disclosures near-real-time; TEFAS fund NAVs publish once
   per day (the 18:30 run already captures same-day NAVs); EVDS macro is

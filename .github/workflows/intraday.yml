@@ -1,0 +1,30 @@
+name: Intraday quotes
+
+on:
+  schedule:
+    # Every 15 min during BIST trading hours (10:00–18:00 Istanbul = 07:00–15:00 UTC), weekdays.
+    # GitHub Actions cron is best-effort and can be delayed several minutes.
+    - cron: "*/15 7-15 * * 1-5"
+  workflow_dispatch:
+
+concurrency:
+  group: intraday
+  cancel-in-progress: true
+
+jobs:
+  intraday:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      # minimal deps — this job only needs quotes + Postgres, not the
+      # full analytics/pdf/streamlit stack, so it starts fast
+      - run: pip install pandas numpy yfinance sqlalchemy psycopg2-binary
+      - run: python -m tefaslab intraday-cloud

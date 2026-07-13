@@ -1,9 +1,10 @@
 import Link from "next/link";
-import { getStatus, getMarketAggregate } from "@/lib/queries";
+import { getStatus, getMarketAggregate, type StatusMap } from "@/lib/queries";
 import { Card, Stat, Delta } from "@/components/ui";
 import { pct, tryBn, num, intFmt } from "@/lib/format";
+import { freshIntraday } from "@/lib/live";
 
-export const revalidate = 1800;
+export const revalidate = 300;
 
 type Snap = Record<string, { level: number; chg_1d: number; date?: string }>;
 type Macro = {
@@ -34,9 +35,14 @@ const FINDINGS = [
 ];
 
 export default async function Home() {
-  const [status, agg] = await Promise.all([getStatus(), getMarketAggregate()]);
-  const snap = (status.market_snapshot ?? {}) as Snap;
+  const [status, agg] = await Promise.all([
+    getStatus().catch((): StatusMap => ({})),
+    getMarketAggregate().catch(() => ({ total_aum: 0, n_funds: 0 })),
+  ]);
+  const live = freshIntraday(status.intraday);
+  const snap = (live?.snapshot ?? status.market_snapshot ?? {}) as Snap;
   const macro = (status.macro_regime ?? {}) as Macro;
+  const breadth = live?.breadth;
 
   return (
     <div className="space-y-12">
@@ -75,10 +81,19 @@ export default async function Home() {
         <section>
           <div className="mb-3 flex items-baseline justify-between">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
-              Market snapshot
+              {live ? (
+                <span className="flex items-center gap-2">
+                  <span className="h-1.5 w-1.5 rounded-full bg-neg" />
+                  Live market
+                </span>
+              ) : (
+                "Market snapshot"
+              )}
             </h2>
             <span className="text-xs text-muted">
-              as of {Object.values(snap)[0]?.date ?? "latest"}
+              {live
+                ? `${live.ts} UTC · quotes delayed ~15 min`
+                : `as of ${Object.values(snap)[0]?.date ?? "latest"}`}
             </span>
           </div>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -91,6 +106,15 @@ export default async function Home() {
                 />
               </Card>
             ))}
+            {breadth && (
+              <Card>
+                <Stat
+                  label="Advancers / Decliners"
+                  value={`${breadth.advancers ?? "–"} / ${breadth.decliners ?? "–"}`}
+                  sub={`₺${breadth.turnover_bn_try ?? "–"}B turnover`}
+                />
+              </Card>
+            )}
           </div>
           {macro.inflation_yoy != null && (
             <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">

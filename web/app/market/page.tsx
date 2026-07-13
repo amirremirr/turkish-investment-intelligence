@@ -4,12 +4,39 @@ import {
   getCrowding,
   getHoldingsCoverage,
   getStatus,
+  type StatusMap,
 } from "@/lib/queries";
 import { Card, SectionTitle, Bar, Stat } from "@/components/ui";
 import { num, signClass } from "@/lib/format";
+import { freshIntraday, type LiveMover } from "@/lib/live";
 
-export const revalidate = 1800;
+export const revalidate = 300;
 export const metadata = { title: "Market" };
+
+function MoverList({ title, rows }: { title: string; rows: LiveMover[] }) {
+  return (
+    <Card>
+      <div className="mb-2 font-semibold">{title}</div>
+      <table className="w-full text-sm">
+        <tbody>
+          {rows.slice(0, 8).map((m) => (
+            <tr key={m.ticker} className="border-b last:border-0">
+              <td className="py-1.5 font-medium">{m.ticker}</td>
+              <td className="py-1.5 text-muted">{m.title.slice(0, 26)}</td>
+              <td className="tnum py-1.5 text-right">{num(m.price, 2)}</td>
+              <td
+                className={`tnum py-1.5 text-right ${signClass(m.chg_pct)}`}
+              >
+                {m.chg_pct >= 0 ? "+" : ""}
+                {num(m.chg_pct, 1)}%
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Card>
+  );
+}
 
 type RiskAppetite = {
   reading?: string;
@@ -18,14 +45,18 @@ type RiskAppetite = {
 };
 
 export default async function MarketPage() {
+  // Guard each query: the small Supabase instance can time a query out
+  // under the build's concurrent load; a degraded section is far better
+  // than a failed build, and it self-heals on the next revalidation.
   const [flows, sectors, crowding, coverage, status] = await Promise.all([
-    getCategoryFlows(),
-    getSectors(),
-    getCrowding(20),
-    getHoldingsCoverage(),
-    getStatus(),
+    getCategoryFlows().catch(() => []),
+    getSectors().catch(() => []),
+    getCrowding(20).catch(() => []),
+    getHoldingsCoverage().catch(() => 0),
+    getStatus().catch((): StatusMap => ({})),
   ]);
   const mood = (status.risk_appetite ?? {}) as RiskAppetite;
+  const live = freshIntraday(status.intraday);
 
   const maxFlow = Math.max(...flows.map((f) => Math.abs(f.net_flow_bn)), 1);
   const maxSect = Math.max(...sectors.map((s) => Math.abs(s.ret_1m)), 0.01);
@@ -39,6 +70,24 @@ export default async function MarketPage() {
           stocks funds crowd into.
         </p>
       </div>
+
+      {live?.movers && (
+        <div>
+          <div className="mb-3 flex items-center gap-2">
+            <span className="h-1.5 w-1.5 rounded-full bg-neg" />
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
+              Live movers
+            </h2>
+            <span className="text-xs text-muted">
+              {live.ts} UTC · delayed ~15 min
+            </span>
+          </div>
+          <div className="grid gap-6 lg:grid-cols-2">
+            <MoverList title="Gainers" rows={live.movers.gainers} />
+            <MoverList title="Losers" rows={live.movers.losers} />
+          </div>
+        </div>
+      )}
 
       {mood.reading && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

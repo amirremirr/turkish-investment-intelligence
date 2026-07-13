@@ -202,6 +202,11 @@ def cmd_publish(args) -> None:
     print(f"Done: {stats}")
 
 
+def cmd_intraday_cloud(args) -> None:
+    from . import intraday_cloud
+    print(intraday_cloud.refresh())
+
+
 def cmd_intraday(args) -> None:
     print(intraday.refresh())
 
@@ -483,8 +488,13 @@ def main() -> None:
 
     p = sub.add_parser("intraday",
                        help="refresh live stock quotes/movers/breadth "
-                            "(15-min cadence; delayed quotes)")
+                            "to local SQLite (15-min cadence)")
     p.set_defaults(func=cmd_intraday)
+
+    p = sub.add_parser("intraday-cloud",
+                       help="same as intraday but writes to Supabase "
+                            "(for the cloud cron; needs SUPABASE_DB_URL)")
+    p.set_defaults(func=cmd_intraday_cloud)
 
     p = sub.add_parser("holdings", help="KAP fund holdings pipeline")
     p.add_argument("action", choices=["scan", "parse", "who", "fund",
