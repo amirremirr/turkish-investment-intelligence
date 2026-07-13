@@ -32,6 +32,13 @@ jobs:
           python-version: "3.11"
           cache: pip
 
+      - name: Verify secrets are set
+        run: |
+          [ -n "$SUPABASE_DB_URL" ] && echo "SUPABASE_DB_URL present" \
+            || echo "::warning::SUPABASE_DB_URL not set — publish will be skipped"
+          [ -n "$EVDS_API_KEY" ] && echo "EVDS_API_KEY present" \
+            || echo "::warning::EVDS_API_KEY not set — macro will be skipped"
+
       - run: pip install -r requirements.txt
 
       # The DB is stateful (KAP holdings history is forward-only), so

@@ -26,5 +26,12 @@ jobs:
           cache: pip
       # minimal deps — this job only needs quotes + Postgres, not the
       # full analytics/pdf/streamlit stack, so it starts fast
+      - name: Verify SUPABASE_DB_URL secret is set
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "::error::SUPABASE_DB_URL repo secret is missing or empty"
+            exit 1
+          fi
+          echo "SUPABASE_DB_URL is present (${#SUPABASE_DB_URL} chars)"
       - run: pip install pandas numpy yfinance sqlalchemy psycopg2-binary
       - run: python -m tefaslab intraday-cloud
