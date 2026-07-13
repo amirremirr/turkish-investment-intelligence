@@ -27,6 +27,7 @@ This platform answers the questions professionals ask instead:
 | **Data** | 1.06M daily fund-price rows (NAV/AUM/investors), 4.5M allocation rows, 613 BIST stocks OHLCV, 17 benchmark series — Jan 2024 → present, refreshed nightly |
 | **Pipeline** | scheduled ETL with logging, retry, health checks, failure alerts ([architecture](docs/ARCHITECTURE.md)) |
 | **Terminal** | 8-page Streamlit app reading precomputed tables — pages load in ~0.1 s |
+| **Public web app** | polished Next.js 16 site reading the Supabase serving copy ([web/](web/)) — screener, fund profiles, market, research |
 | **Products** | auto-generated [monthly intelligence report](reports/), rule-based per-fund investment memos |
 | **Research** | reproducible studies with documented [methodology](docs/METHODOLOGY.md) |
 

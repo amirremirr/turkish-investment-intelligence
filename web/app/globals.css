@@ -1,0 +1,72 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #fbfbfa;
+  --surface: #ffffff;
+  --line: #e9e8e4;
+  --fg: #16150f;
+  --muted: #6b6a63;
+  --accent: #2a78d6;
+  --accent-soft: #eaf1fb;
+  --pos: #0f7a52;
+  --neg: #c8372f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d0d0c;
+    --surface: #171716;
+    --line: #2a2a27;
+    --fg: #f2f1ea;
+    --muted: #9a988e;
+    --accent: #4b93e8;
+    --accent-soft: #16243a;
+    --pos: #35b581;
+    --neg: #e5675e;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-pos: var(--pos);
+  --color-neg: var(--neg);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+* {
+  border-color: var(--line);
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* tabular figures everywhere numbers appear */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+.text-pos {
+  color: var(--pos);
+}
+.text-neg {
+  color: var(--neg);
+}
+.text-muted {
+  color: var(--muted);
+}
+
+a {
+  color: inherit;
+}
