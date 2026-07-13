@@ -88,14 +88,50 @@ def _payload(start: date, end: date, fund_type: str, fund_code: str | None,
     }
 
 
+# Fields we depend on downstream. If TEFAS renames its response wrapper
+# or a column, `.get()` would silently yield None and we'd ingest bad
+# data — so we assert the contract and fail loudly, naming what changed.
+_HISTORY_KEYS = {"fonKodu", "tarih", "fiyat", "tedPaySayisi",
+                 "kisiSayisi", "portfoyBuyukluk"}
+
+
+def _check_contract(body: dict, endpoint: str, required: set[str],
+                    min_extra: int = 0) -> None:
+    if "resultList" not in body:
+        raise TefasError(
+            f"{endpoint}: response has no 'resultList' key — the TEFAS API "
+            f"shape likely changed. Top-level keys: {sorted(body)[:8]}")
+    rows = body["resultList"] or []
+    if not rows:
+        return  # legitimately empty (e.g. a date range with no data)
+    have = set(rows[0])
+    missing = required - have
+    if missing:
+        raise TefasError(
+            f"{endpoint}: rows are missing expected fields "
+            f"{sorted(missing)} — TEFAS schema likely changed. "
+            f"Got fields: {sorted(have)[:14]}")
+    if len(have) < len(required) + min_extra:
+        raise TefasError(
+            f"{endpoint}: rows have only {len(have)} fields "
+            f"(expected ≥ {len(required) + min_extra}) — allocation "
+            f"columns may have been dropped. Got: {sorted(have)[:14]}")
+
+
 def _fetch_paged(session: requests.Session, endpoint: str, start: date,
-                 end: date, fund_type: str, fund_code: str | None) -> list[dict]:
+                 end: date, fund_type: str, fund_code: str | None,
+                 required: set[str] | None = None,
+                 min_extra: int = 0) -> list[dict]:
     rows: list[dict] = []
     bas = 1
+    checked = False
     while True:
         body = _post(session, endpoint,
                      _payload(start, end, fund_type, fund_code,
                               bas, bas + PAGE_SIZE - 1))
+        if not checked and required is not None:
+            _check_contract(body, endpoint, required, min_extra)
+            checked = True
         page = body.get("resultList") or []
         rows.extend(page)
         total = body.get("toplamSayi") or 0
@@ -111,7 +147,8 @@ def fetch_history(session: requests.Session, start: date, end: date,
     """Daily NAV records: fonKodu, fonUnvan, tarih (ISO), fiyat,
     tedPaySayisi, kisiSayisi, portfoyBuyukluk."""
     return _fetch_paged(session, "fonGnlBlgSiraliGetir",
-                        start, end, fund_type, fund_code)
+                        start, end, fund_type, fund_code,
+                        required=_HISTORY_KEYS)
 
 
 def fetch_allocation(session: requests.Session, start: date, end: date,
@@ -119,8 +156,10 @@ def fetch_allocation(session: requests.Session, start: date, end: date,
                      fund_code: str | None = None) -> list[dict]:
     """Daily portfolio weights: fonKodu, tarih plus ~55 lowercase
     asset-class percentage columns (hs=equity, dt=gov bond, ...)."""
+    # require the anchors + at least ~10 asset columns present
     return _fetch_paged(session, "dagilimSiraliGetirT",
-                        start, end, fund_type, fund_code)
+                        start, end, fund_type, fund_code,
+                        required={"fonKodu", "tarih"}, min_extra=10)
 
 
 def make_session() -> requests.Session:

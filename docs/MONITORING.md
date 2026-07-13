@@ -47,6 +47,30 @@ Run it yourself anytime: `python scripts/health_cloud.py`
 failure). The local Streamlit dashboard's `health` command and the
 Developer page cover the same ground for the local SQLite copy.
 
+## Guarding against source changes (silent bad data)
+
+The external sources (TEFAS, KAP, EVDS, Yahoo) are unofficial interfaces
+with no stability contract — each has already changed once during this
+project. The danger isn't a source going *down* (that fails loudly and
+the monitor catches it); it's a source that keeps responding but
+**renames a field or changes shape**, so the pipeline "succeeds" with
+null/garbage values.
+
+Defense: the TEFAS client asserts a **response contract** on every
+fetch — the expected wrapper and every required field
+(`fonKodu`, `tarih`, `fiyat`, …; and that allocation asset columns are
+still present). If the shape changes, ingestion **stops with a named
+error** ("rows are missing expected fields ['fiyat'] — TEFAS schema
+likely changed") instead of writing bad data. Combined with the
+plausibility checks in `health.py` (impossible values, ±50% return
+outliers, date continuity), this turns most silent corruptions into
+loud, diagnosable failures.
+
+Residual limit: a source returning the right *shape* with subtly wrong
+*values* can still slip through for a cycle. Mitigations: raw data is
+archived (any bad cycle is reprocessable) and the pipeline is idempotent
+and resumable, so recovery after a fix is just a re-run.
+
 ## What auto-heals vs. what needs you
 
 - **Transient source hiccups** (TEFAS 429, a Yahoo timeout, an

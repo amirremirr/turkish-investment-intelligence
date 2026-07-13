@@ -125,6 +125,38 @@ def test_beta_uses_lagged_benchmark(tmp_conn):
     assert out.loc["AAA", "beta"] == pytest.approx(1.0, abs=0.05)
 
 
+# -------------------------------------------- TEFAS contract check
+
+def test_tefas_contract_accepts_valid_shape():
+    from tefaslab import client
+    good = {"resultList": [{"fonKodu": "AAA", "tarih": "2026-01-01",
+                            "fiyat": 1.0, "tedPaySayisi": 1,
+                            "kisiSayisi": 1, "portfoyBuyukluk": 1.0}],
+            "toplamSayi": 1}
+    client._check_contract(good, "test", client._HISTORY_KEYS)  # no raise
+
+
+def test_tefas_contract_catches_missing_wrapper():
+    from tefaslab import client
+    with pytest.raises(client.TefasError, match="no 'resultList'"):
+        client._check_contract({"data": []}, "test", client._HISTORY_KEYS)
+
+
+def test_tefas_contract_catches_renamed_field():
+    from tefaslab import client
+    # 'fiyat' renamed to 'price' -> must fail loudly, not ingest nulls
+    bad = {"resultList": [{"fonKodu": "AAA", "tarih": "2026-01-01",
+                           "price": 1.0, "tedPaySayisi": 1,
+                           "kisiSayisi": 1, "portfoyBuyukluk": 1.0}]}
+    with pytest.raises(client.TefasError, match="missing expected fields"):
+        client._check_contract(bad, "test", client._HISTORY_KEYS)
+
+
+def test_tefas_contract_ignores_empty_result():
+    from tefaslab import client
+    client._check_contract({"resultList": []}, "test", client._HISTORY_KEYS)
+
+
 # ------------------------------------------------------ publisher
 
 def test_publisher_roundtrip(tmp_path, tmp_conn):
