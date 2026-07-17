@@ -69,6 +69,14 @@ def generate_memo(conn: sqlite3.Connection, code: str, rf: float = 0.0,
                      f"is not statistically significant "
                      f"(t = {f.get('alpha_t') or float('nan'):.1f}) — "
                      "could be noise on a short sample")
+    # symmetric: a significantly NEGATIVE alpha is a risk in its own
+    # right (persistent value destruction after factor exposure)
+    if (f and f["alpha_annual"] < -0.10 and f["r_squared"] > 0.3
+            and (f.get("alpha_t") or 0) < -2):
+        risks.append(f"Significantly negative factor-adjusted "
+                     f"performance (alpha ≈ "
+                     f"{f['alpha_annual'] * 100:.0f}%/yr, "
+                     f"t = {f['alpha_t']:.1f})")
 
     if f:
         drivers = {k: v["beta"] for k, v in f["factors"].items()}

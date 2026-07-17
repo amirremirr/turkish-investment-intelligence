@@ -53,13 +53,14 @@ export default async function Home() {
           refreshed nightly
         </div>
         <h1 className="mt-5 max-w-3xl text-4xl font-semibold leading-tight sm:text-5xl">
-          Professional analytics for the{" "}
-          <span className="text-accent">Turkish fund market</span>.
+          Professional <span className="text-accent">questions</span> for the
+          Turkish fund market.
         </h1>
         <p className="mt-4 max-w-2xl text-lg text-muted">
-          Most tools stop at “top returns.” This one answers the questions
-          professionals ask: what risk earned that return, where investor money
-          is actually moving, and whether a manager is skilled or just exposed.
+          Most tools stop at “top returns.” This open research project asks
+          what professionals ask: what risk earned that return, where investor
+          money is actually moving, and whether a manager is skilled or just
+          exposed — with every method documented and every limitation stated.
         </p>
         <div className="mt-6 flex flex-wrap gap-3">
           <Link

@@ -82,10 +82,11 @@ presentation tables by a scheduled nightly pipeline.
   retention) after every run. One-time setup: add the `EVDS_API_KEY`
   repo secret, then run the workflow manually once with
   `mode=bootstrap` (~2h full rebuild in the cloud).
-- Legacy/local option: Windows Task Scheduler runs
-  [scripts/run_daily.py](../scripts/run_daily.py) (logs to `logs/`, one
-  retry, desktop notification on failure). Run either the cloud or the
-  local scheduler, not both — they would maintain divergent databases.
+- **GitHub Actions is the sole scheduler.** The local Windows tasks
+  were deleted (2026-07-17); [scripts/run_daily.py](../scripts/run_daily.py)
+  remains only as the retry/logging wrapper the cloud workflow invokes
+  and for *manual* local runs. Do not re-register a local schedule —
+  two schedulers means two divergent databases.
 - **Intraday layer** (every 15 min during BIST hours): refreshes
   delayed quotes (~15 min lag) into `system_status['intraday']` — live
   snapshot, breadth, movers. Runs in the **cloud** via GitHub Actions
@@ -104,6 +105,25 @@ presentation tables by a scheduled nightly pipeline.
   benchmark staleness, classification); non-zero exit for schedulers.
 - CI ([ci.yml](../.github/workflows/ci.yml)): unit tests + import smoke
   on every push, on Linux.
+
+## The two-surfaces rule (durable)
+
+Streamlit and Next.js coexist by a deliberate sequencing rule, not by
+accident — and the rule is what keeps "dual cost" from becoming "dual
+product":
+
+1. **Streamlit is the private lab bench** — feature-frozen. It exists
+   for interactive research (Research Lab, Data Explorer, SQL box) on
+   the local compute DB. New product features do **not** land here.
+2. **Next.js is the only surface that grows** — anything user-facing
+   (screener filters, fund pages, alerts, auth) is built there.
+3. **`dash_*` tables are the contract** between compute and both
+   surfaces. Any new feature starts by adding to the contract, never by
+   computing inside a UI.
+
+If a future change violates rule 1 (e.g. "add Research Lab v2 to
+Streamlit"), that's the signal to port the Research Lab to the web
+instead.
 
 ## Data source notes
 

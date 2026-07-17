@@ -10,10 +10,12 @@ pip install -r requirements.txt
 # Full nightly ETL: refresh raw data + rebuild dash_* tables + health
 python -m tefaslab daily              # ~5 min with network
 python -m tefaslab daily --skip-raw   # analytics only (~1 min)
-# Scheduled: Windows task "BIST-Daily-Pipeline", weekdays 18:30, via
-# scripts/run_daily.py (logs to logs/, one retry, toast on failure)
+# Scheduling: GitHub Actions ONLY (daily.yml, weekdays 18:30 Istanbul).
+# Do not register a local schedule — two schedulers = divergent DBs.
+# The commands above are for manual local runs.
 
-# Intraday quotes (15-min cadence; scheduled task "BIST-Intraday")
+# Intraday quotes — cloud cron (intraday.yml) writes to Supabase.
+# Local variant (writes local SQLite for Streamlit, manual use only):
 python -m tefaslab intraday
 
 # Publish serving tables to Supabase Postgres (SUPABASE_DB_URL in .env;

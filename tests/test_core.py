@@ -125,6 +125,82 @@ def test_beta_uses_lagged_benchmark(tmp_conn):
     assert out.loc["AAA", "beta"] == pytest.approx(1.0, abs=0.05)
 
 
+# ------------------------------------- factor t-stat + memo gating
+
+def test_fund_factor_model_returns_alpha_t(tmp_conn):
+    """Single-fund path must expose the same significance statistic the
+    batch path and the memo gate rely on."""
+    from tefaslab import factors
+    rng = np.random.default_rng(3)
+    n = 300
+    bench_ret = rng.normal(0, 0.01, n)
+    bench = 1000 * np.cumprod(1 + bench_ret)
+    fund = 10 * np.cumprod(1 + np.concatenate([[0], bench_ret[:-1]]))
+    start = date(2025, 1, 1)
+    tmp_conn.execute("INSERT INTO funds VALUES ('AAA','T','YAT','Equity "
+                     "Turkey')")
+    for series in ("bist100", "gold_try_gram", "usdtry", "nasdaq_try"):
+        tmp_conn.executemany(
+            "INSERT INTO benchmarks VALUES (?,?,?)",
+            [(series, (start + timedelta(days=i)).isoformat(),
+              float(bench[i])) for i in range(n)])
+    tmp_conn.executemany(
+        "INSERT INTO prices VALUES (?,?,?,?,?,?)",
+        [("AAA", (start + timedelta(days=i)).isoformat(),
+          float(fund[i]), 1e6, 1000, 1e7) for i in range(n)])
+    tmp_conn.commit()
+    out = factors.fund_factor_model(tmp_conn, "AAA")
+    assert "alpha_t" in out
+    assert out["alpha_t"] is None or isinstance(out["alpha_t"], float)
+
+
+def _memo_with_factor(monkeypatch, tmp_conn, fdict):
+    """Render a memo with a controlled factor-model result."""
+    import pandas as pd
+    from tefaslab import memo, factors
+    tmp_conn.execute("INSERT OR IGNORE INTO funds VALUES "
+                     "('AAA','TEST FON','YAT','Equity Turkey')")
+    tmp_conn.executemany(
+        "INSERT OR IGNORE INTO prices VALUES (?,?,?,?,?,?)",
+        [("AAA", f"2025-01-{d:02d}", 10.0, 1000, 5000, 1e9)
+         for d in range(1, 9)])
+    tmp_conn.commit()
+    table = pd.DataFrame([{
+        "title": "TEST FON", "category": "Equity Turkey",
+        "ret_1y": 0.5, "excess_1y": 0.0, "sharpe": 1.0, "sortino": 1.0,
+        "ann_vol": 0.2, "max_dd": -0.1, "aum": 1e9, "investors": 5000,
+    }], index=["AAA"])
+    monkeypatch.setattr(factors, "fund_factor_model",
+                        lambda conn, code, **kw: fdict)
+    return memo.generate_memo(tmp_conn, "AAA", rf=0.4, table=table)
+
+
+_BASE_F = {"alpha_annual": 0.5, "r_squared": 0.5, "unexplained_return": 0,
+           "factors": {"bist100": {"beta": 0.3}, "gold_try": {"beta": 0.0},
+                       "usdtry": {"beta": 0.0}, "nasdaq_try": {"beta": 0.0}}}
+
+
+def test_memo_gates_insignificant_alpha(monkeypatch, tmp_conn):
+    text = _memo_with_factor(monkeypatch, tmp_conn,
+                             {**_BASE_F, "alpha_t": 0.5})
+    assert "not statistically significant" in text
+    assert "Positive factor-adjusted performance" not in text
+
+
+def test_memo_praises_significant_alpha(monkeypatch, tmp_conn):
+    text = _memo_with_factor(monkeypatch, tmp_conn,
+                             {**_BASE_F, "alpha_t": 3.2})
+    assert "Positive factor-adjusted performance" in text
+    assert "t = 3.2" in text
+
+
+def test_memo_flags_significant_negative_alpha(monkeypatch, tmp_conn):
+    text = _memo_with_factor(
+        monkeypatch, tmp_conn,
+        {**_BASE_F, "alpha_annual": -0.3, "alpha_t": -3.0})
+    assert "Significantly negative factor-adjusted" in text
+
+
 # -------------------------------------------- TEFAS contract check
 
 def test_tefas_contract_accepts_valid_shape():

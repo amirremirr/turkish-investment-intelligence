@@ -46,10 +46,14 @@ institution-grade intelligence, and it should not be marketed as such.
 ## Weaknesses (open, prioritized)
 
 1. **Infrastructure**: SQLite single-writer for compute (by design —
-   see [SUPABASE.md](SUPABASE.md)). ~~Windows-centric ops~~ — pipeline
-   runs on GitHub Actions. ~~No multi-user serving path~~ — a curated
-   serving copy publishes to Supabase Postgres after each pipeline run
-   (REST/auth-ready); the Next.js frontend remains future work.
+   see [SUPABASE.md](SUPABASE.md)); the Next.js web app is live on the
+   Supabase serving copy. The remaining seam: the authoritative compute
+   DB lives in GitHub Actions cache (14-day artifact backup + local
+   copy) — **no durable snapshot store yet**. Planned fix: weekly
+   snapshot to Supabase Storage / GitHub Release, each snapshot frozen
+   with a **data+code hash** so any cited finding is reproducible.
+   Note the price of SQLite lock-in compounds monthly — acceptable
+   now, but it must stay a *priced* decision, not a forgotten one.
 2. **Testing depth**: unit tests now cover the critical logic (lag
    convention, flow guard, classifier, OLS, KAP parser), but coverage
    is thin elsewhere; no integration tests against live APIs.
