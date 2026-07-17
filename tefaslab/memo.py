@@ -55,10 +55,20 @@ def generate_memo(conn: sqlite3.Connection, code: str, rf: float = 0.0,
         strengths.append(f"Sharpe {m['sharpe']:.2f} is above the "
                          f"{m['category']} median "
                          f"({peers['sharpe'].median():.2f})")
-    if f and f["alpha_annual"] > 0.10 and f["r_squared"] > 0.3:
+    # Same philosophy as the skill score: a noisy alpha on a short
+    # sample is not a strength — require statistical significance
+    # (|t| > 2), not just a big point estimate.
+    if (f and f["alpha_annual"] > 0.10 and f["r_squared"] > 0.3
+            and (f.get("alpha_t") or 0) > 2):
         strengths.append(f"Positive factor-adjusted performance "
                          f"(alpha ≈ {f['alpha_annual'] * 100:.0f}%/yr, "
+                         f"t = {f['alpha_t']:.1f}, "
                          f"R² {f['r_squared']:.2f})")
+    elif (f and f["alpha_annual"] > 0.10 and f["r_squared"] > 0.3):
+        risks.append(f"Apparent alpha ({f['alpha_annual'] * 100:.0f}%/yr) "
+                     f"is not statistically significant "
+                     f"(t = {f.get('alpha_t') or float('nan'):.1f}) — "
+                     "could be noise on a short sample")
 
     if f:
         drivers = {k: v["beta"] for k, v in f["factors"].items()}

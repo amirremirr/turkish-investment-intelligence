@@ -53,6 +53,15 @@ export default function ResearchPage() {
         standard errors, out-of-sample validation, and stated limitations. Full
         write-ups on GitHub.
       </p>
+      <p className="mt-3 max-w-2xl rounded-lg border border-dashed p-3 text-xs text-muted">
+        <b>Scope honestly stated:</b> the sample is ~2.5 years inside one
+        macro regime; flow effects clear significance tests but explain
+        &lt;1% of return variance and are not tradable after costs; the
+        closet-index study measures index-like <i>exposure</i>, not
+        net-of-fee value (fee data isn't public via TEFAS). These are
+        internal research memos with open methods — not validated
+        academic results, and not investment advice.
+      </p>
 
       <div className="mt-6 space-y-4">
         {NOTES.map((note) => (

@@ -90,6 +90,16 @@ def fund_factor_model(conn: sqlite3.Connection, code: str,
     resid = y - X @ coef
     r2 = 1 - resid.var() / y.var() if y.var() > 0 else np.nan
     alpha_daily = float(coef[0]) / K_DAYS  # intercept is per K-day period
+    # alpha t-stat, same estimator as the batch path (all_factor_betas):
+    # OLS SE with ~K variance inflation for the overlapping-return
+    # serial correlation — conservative, and consistent across surfaces
+    dof = max(len(y) - X.shape[1], 1)
+    s2 = (resid @ resid) / dof * K_DAYS
+    try:
+        alpha_se = np.sqrt(s2 * np.linalg.inv(X.T @ X)[0, 0])
+        alpha_t = float(coef[0] / alpha_se) if alpha_se > 0 else float("nan")
+    except np.linalg.LinAlgError:
+        alpha_t = float("nan")
 
     # attribution over the same window (daily returns, full window)
     start, end = daily.index[0], daily.index[-1]
@@ -115,6 +125,7 @@ def fund_factor_model(conn: sqlite3.Connection, code: str,
         "n_obs": len(daily),
         "fund_return": round(fund_total, 4),
         "alpha_annual": round(alpha_daily * metrics.TRADING_DAYS, 4),
+        "alpha_t": round(alpha_t, 2) if np.isfinite(alpha_t) else None,
         "r_squared": round(float(r2), 3),
         "factors": contributions,
         "unexplained_return": round(fund_total - explained, 4),

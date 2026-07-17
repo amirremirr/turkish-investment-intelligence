@@ -1,8 +1,35 @@
 # SWOT — honest self-assessment
 
-*Last reviewed 2026-07-12. Weaknesses and threats are tracked here on
-purpose: a platform that hides its limits can't be trusted on its
-strengths.*
+*Last reviewed 2026-07-17 (incl. an external critical review).
+Weaknesses and threats are tracked here on purpose: a platform that
+hides its limits can't be trusted on its strengths.*
+
+## External review, 2026-07-17 — accepted findings
+
+A detailed external critique was accepted essentially in full. Its
+sharpest point: *the gap is not awareness — several UI surfaces still
+behaved as if the documented limitations were solved.* Actions taken
+same day:
+
+- **Memo/scoring inconsistency fixed** — memos flagged raw
+  `alpha > 10%` as a strength while the skill score ranks the
+  t-statistic; memos now require `|t| > 2` and explicitly flag
+  non-significant alpha as a *risk*.
+- **Inference unified** — the single-fund factor model now computes the
+  same overlap-corrected alpha t-stat as the batch path.
+- **Limitations surfaced in the product, not only in docs** — the web
+  homepage and research page now state the single-regime sample, the
+  <1% R² of flow effects, non-tradability, and the fee-blindness of
+  the closet-index study, directly next to the findings.
+- **Single scheduler** — the local Windows daily task was deleted;
+  GitHub Actions is the sole pipeline owner (divergent-DB risk closed).
+
+Accepted but structural (tracked below / roadmap): cache-backed
+authoritative DB, thin operational CI, four-factor model simplicity,
+multiple-testing corrections, fund-level panel designs, fee data,
+heuristic score weights, regime-table power. Position statement: this
+is a **personal research workstation with transparent methods** — not
+institution-grade intelligence, and it should not be marketed as such.
 
 ## Strengths
 

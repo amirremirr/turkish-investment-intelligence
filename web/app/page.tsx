@@ -149,9 +149,16 @@ export default async function Home() {
       )}
 
       <section>
-        <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-muted">
+        <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">
           Research findings
         </h2>
+        <p className="mb-4 text-xs text-muted">
+          In-sample evidence from Jan 2024 → present — a single
+          high-inflation, restrictive-rate regime. Effects are
+          statistically supported but economically modest (R² &lt; 1% for
+          flow signals); read the notes for methods and limits before
+          treating any of this as durable.
+        </p>
         <div className="grid gap-4 sm:grid-cols-2">
           {FINDINGS.map((f) => (
             <Link key={f.t} href="/research">
