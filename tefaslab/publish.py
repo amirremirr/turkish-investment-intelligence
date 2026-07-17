@@ -28,12 +28,14 @@ import time
 from pathlib import Path
 
 import pandas as pd
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import bindparam, create_engine, inspect, text
 
 from . import db
 
+# system_status is NOT here — it gets a key-level upsert (see
+# _publish_status) so cloud-only rows survive a full-table replace.
 FULL_TABLES = ["funds", "stocks", "benchmarks", "fund_holdings",
-               "kap_disclosures", "system_status"]
+               "kap_disclosures"]
 INCREMENTAL = {"prices": "date", "stock_prices": "date"}
 SKIP = {"allocations", "live_quotes"}
 
@@ -74,6 +76,40 @@ def _dash_tables(conn: sqlite3.Connection) -> list[str]:
         "AND name LIKE 'dash_%'")]
 
 
+# Keys written directly to the serving DB by cloud jobs — the local
+# publish must never touch them (the local copy of these is stale).
+CLOUD_ONLY_STATUS = {"intraday"}
+
+
+def _publish_status(src: sqlite3.Connection, engine) -> int:
+    """Upsert system_status by key, refreshing only the keys the local
+    pipeline owns. Cloud-only keys (e.g. 'intraday', written straight to
+    Supabase by the intraday cron) are left completely untouched — a
+    full-table replace would delete them, and re-publishing the local
+    copy would overwrite fresh cloud data with a stale local row."""
+    try:
+        local = pd.read_sql_query("SELECT * FROM system_status", src)
+    except Exception:
+        return 0
+    local = local[~local["key"].isin(CLOUD_ONLY_STATUS)]
+    if not insp_has(engine, "system_status"):
+        local.head(0).to_sql("system_status", engine, index=False)
+    keys = local["key"].tolist()
+    if keys:
+        stmt = text("DELETE FROM system_status WHERE key IN :ks") \
+            .bindparams(bindparam("ks", expanding=True))
+        with engine.begin() as c:
+            c.execute(stmt, {"ks": keys})
+    if len(local):
+        local.to_sql("system_status", engine, if_exists="append",
+                     index=False)
+    return len(local)
+
+
+def insp_has(engine, table: str) -> bool:
+    return inspect(engine).has_table(table)
+
+
 def publish(url: str | None = None, init: bool = False,
             db_path=db.DB_PATH) -> dict:
     url = url or serving_url()
@@ -95,6 +131,12 @@ def publish(url: str | None = None, init: bool = False,
                   chunksize=WRITE_CHUNK, method="multi")
         stats[name] = len(df)
         print(f"  {name:<22} {len(df):>9,} rows (replace)")
+
+    # system_status: key-level upsert (preserves cloud-only 'intraday')
+    n = _publish_status(src, engine)
+    if n:
+        stats["system_status"] = n
+        print(f"  {'system_status':<22} {n:>9,} rows (upsert by key)")
 
     insp = inspect(engine)
     src_tables = {r[0] for r in src.execute(

@@ -61,18 +61,26 @@ def main() -> int:
     # 1. connectivity
     add(OK, "supabase connection", url.split("@")[-1])
 
-    # 2. explicit pipeline-failure flag (value may be false = not failed)
+    # 2. pipeline-failure flag — but only "active" if no successful run
+    #    has completed since (else it's a resolved past failure, not a
+    #    reason to keep alerting). updated_at is ISO, so string compare.
     import json
     pf = status_row("pipeline_failed")
+    pc = status_row("pipeline_complete")
     failed = False
     if pf and pf[0]:
         try:
             failed = bool(json.loads(pf[0]))
         except Exception:
             failed = pf[0] not in ("false", "null", "", None)
-    if failed:
+    superseded = bool(failed and pf and pf[1] and pc and pc[1]
+                      and pc[1] >= pf[1])
+    if failed and not superseded:
         add(FAIL, "pipeline flag",
             f"last pipeline run reported FAILURE: {str(pf[0])[:120]}")
+    elif failed and superseded:
+        add(OK, "pipeline flag",
+            "a past failure was superseded by a later successful run")
     else:
         add(OK, "pipeline flag", "no active failure flag")
 

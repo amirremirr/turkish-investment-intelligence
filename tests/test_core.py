@@ -185,6 +185,39 @@ def test_publisher_roundtrip(tmp_path, tmp_conn):
     assert stats3["prices"] == 1
 
 
+def test_publish_preserves_cloud_only_status(tmp_path, tmp_conn):
+    """A row that only exists in the serving copy (e.g. 'intraday',
+    written directly by the cloud cron) must survive a publish that
+    full-replaces everything else."""
+    from tefaslab import publish as pub
+    from sqlalchemy import create_engine, text
+    # source has a STALE local intraday (a leftover) — it must be ignored
+    tmp_conn.execute("CREATE TABLE system_status "
+                     "(key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)")
+    tmp_conn.executemany(
+        "INSERT INTO system_status VALUES (?,?,?)",
+        [("pipeline_complete", "true", "2026-07-17T20:00:00"),
+         ("intraday", '{"ts":"STALE-LOCAL"}', "2026-07-13T00:00:00")])
+    tmp_conn.commit()
+    eng = create_engine(f"sqlite:///{tmp_path / 'serving.db'}")
+    with eng.begin() as c:
+        c.execute(text("CREATE TABLE system_status "
+                       "(key TEXT, value TEXT, updated_at TEXT)"))
+        c.execute(text("INSERT INTO system_status "
+                       "VALUES ('intraday', '{\"ts\":\"FRESH-CLOUD\"}', 't')"))
+        c.execute(text("INSERT INTO system_status "
+                       "VALUES ('pipeline_complete', 'false', 'old')"))
+    pub._publish_status(tmp_conn, eng)
+    with eng.connect() as c:
+        intra = c.execute(text("SELECT value FROM system_status "
+                               "WHERE key='intraday'")).scalar()
+        pcval = c.execute(text("SELECT value FROM system_status "
+                               "WHERE key='pipeline_complete'")).scalar()
+    eng.dispose()
+    assert "FRESH-CLOUD" in intra   # cloud intraday untouched, not clobbered
+    assert pcval == "true"          # local-owned key refreshed, not stale
+
+
 # ------------------------------------------------------- KAP parser
 
 def test_kap_parser_on_fixture():
