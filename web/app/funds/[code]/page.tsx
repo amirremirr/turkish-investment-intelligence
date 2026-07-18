@@ -54,9 +54,12 @@ export default async function FundPage({
   const fund = await getFund(code);
   if (!fund) notFound();
 
+  // Every secondary query degrades rather than 500s the page: the core
+  // metrics above come from getFund, and a slow/failed holdings or NAV
+  // query should cost a card, not the whole render.
   const [nav, holdings, similar, attrib] = await Promise.all([
-    getFundNav(code),
-    getFundHoldings(code),
+    getFundNav(code).catch(() => []),
+    getFundHoldings(code).catch(() => []),
     getSimilarFunds(code).catch(() => []),
     getFundAttribution(code).catch(() => []),
   ]);

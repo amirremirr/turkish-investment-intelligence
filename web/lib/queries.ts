@@ -221,7 +221,11 @@ export async function getFundAttribution(code: string): Promise<Attribution[]> {
       SELECT to_char((mp || '-01')::date + interval '1 month',
                      'YYYY-MM-DD') AS m1,
              to_char((mp || '-01')::date + interval '2 month',
-                     'YYYY-MM-DD') AS m2
+                     'YYYY-MM-DD') AS m2,
+             to_char((mp || '-01')::date + interval '1 month'
+                     - interval '20 days', 'YYYY-MM-DD') AS m1_lo,
+             to_char((mp || '-01')::date + interval '2 month'
+                     - interval '20 days', 'YYYY-MM-DD') AS m2_lo
       FROM latest
     ),
     b AS (
@@ -229,15 +233,21 @@ export async function getFundAttribution(code: string): Promise<Attribution[]> {
       FROM fund_holdings h, latest
       WHERE h.code = ${c} AND h.period = latest.mp AND h.weight_pct > 0
     ),
+    -- Both bounds matter: without a lower bound each DISTINCT ON scans
+    -- the whole stock_prices table (~5s over 360k rows), and two of them
+    -- per cold render blew the serverless timeout. A ~20-day lookback is
+    -- enough to find the last close before each month boundary.
     base AS (
       SELECT DISTINCT ON (s.ticker) s.ticker, s.close
       FROM stock_prices s, win
-      WHERE s.date < win.m1 ORDER BY s.ticker, s.date DESC
+      WHERE s.date < win.m1 AND s.date >= win.m1_lo
+      ORDER BY s.ticker, s.date DESC
     ),
     post AS (
       SELECT DISTINCT ON (s.ticker) s.ticker, s.close
       FROM stock_prices s, win
-      WHERE s.date < win.m2 ORDER BY s.ticker, s.date DESC
+      WHERE s.date < win.m2 AND s.date >= win.m2_lo
+      ORDER BY s.ticker, s.date DESC
     )
     SELECT b.ticker, b.name, b.weight_pct,
            (post.close / base.close - 1) * 100 AS stock_ret_pct,
