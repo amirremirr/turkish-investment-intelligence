@@ -151,6 +151,34 @@ def main() -> int:
     else:
         add(WARN, "intraday", "no intraday row yet")
 
+    # 9. KAP discovery cursor — the scan must keep walking forward or new
+    #    monthly holdings are never found. This failed silently for months
+    #    (holdings parked on one period) because the old scan restarted at
+    #    the last *found* id; a stalled cursor is that same failure mode,
+    #    so it is a hard fail rather than a warning.
+    kapst = status_row("kap_holdings")
+    if kapst:
+        import json
+        try:
+            k = json.loads(kapst[0])
+            cur, adv = k.get("cursor_to"), k.get("advanced")
+            if cur is None:
+                add(WARN, "kap discovery",
+                    "no cursor in status yet (pre-fix run?)")
+            elif not adv:
+                add(FAIL, "kap discovery",
+                    f"scan cursor PARKED at {cur} — it did not advance on "
+                    "the last run, so new monthly holdings will never be "
+                    "discovered")
+            else:
+                add(OK, "kap discovery",
+                    f"cursor {cur} (+{adv} ids last run), "
+                    f"found {k.get('found', 0)} / parsed {k.get('parsed', 0)}")
+        except Exception as e:
+            add(WARN, "kap discovery", f"unparseable status: {e}")
+    else:
+        add(WARN, "kap discovery", "no kap_holdings status yet")
+
     conn.close()
     engine.dispose()
 
