@@ -156,6 +156,48 @@ export async function getFundHoldings(code: string): Promise<Holding[]> {
   }));
 }
 
+export type SimilarFund = {
+  code: string;
+  title: string | null;
+  overlap: number; // pp of portfolio in the same stocks at the same weight
+  shared: number; // number of common holdings
+};
+
+// Holdings overlap between this fund and every other: Σ min(weight) over
+// common tickers — the share of portfolio two funds hold identically.
+// High overlap = near-clone books (holdings-based herding, independent
+// of the return-based closet-index signal).
+export async function getSimilarFunds(code: string): Promise<SimilarFund[]> {
+  const c = code.toUpperCase();
+  const rows = await sql`
+    WITH latest AS (
+      SELECT code, MAX(period) AS mp FROM fund_holdings GROUP BY code
+    ),
+    book AS (
+      SELECT h.code, h.ticker, h.weight_pct FROM fund_holdings h
+      JOIN latest l ON l.code = h.code AND l.mp = h.period
+      WHERE h.weight_pct > 0
+    ),
+    target AS (SELECT ticker, weight_pct FROM book WHERE code = ${c})
+    SELECT b.code, f.title,
+           SUM(LEAST(b.weight_pct, t.weight_pct)) AS overlap,
+           COUNT(*) AS shared
+    FROM book b
+    JOIN target t ON t.ticker = b.ticker
+    LEFT JOIN funds f ON f.code = b.code
+    WHERE b.code <> ${c}
+    GROUP BY b.code, f.title
+    HAVING SUM(LEAST(b.weight_pct, t.weight_pct)) >= 10
+    ORDER BY overlap DESC
+    LIMIT 6`;
+  return rows.map((r) => ({
+    code: r.code,
+    title: r.title,
+    overlap: Number(r.overlap),
+    shared: Number(r.shared),
+  }));
+}
+
 export async function getFundCodes(limit = 60): Promise<string[]> {
   const rows = await sql`
     SELECT code FROM dash_metrics

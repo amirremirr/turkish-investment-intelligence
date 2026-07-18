@@ -1,6 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getFund, getFundNav, getFundHoldings } from "@/lib/queries";
+import {
+  getFund,
+  getFundNav,
+  getFundHoldings,
+  getSimilarFunds,
+} from "@/lib/queries";
 import { Card, Stat, Delta, SectionTitle, Bar } from "@/components/ui";
 import { Sparkline } from "@/components/sparkline";
 import { pct, pctPoints, num, tryBn, intFmt, signClass } from "@/lib/format";
@@ -48,9 +53,10 @@ export default async function FundPage({
   const fund = await getFund(code);
   if (!fund) notFound();
 
-  const [nav, holdings] = await Promise.all([
+  const [nav, holdings, similar] = await Promise.all([
     getFundNav(code),
     getFundHoldings(code),
+    getSimilarFunds(code).catch(() => []),
   ]);
 
   // downsample NAV to ~200 points for a compact SVG
@@ -260,6 +266,52 @@ export default async function FundPage({
             </>
           )}
         </Card>
+
+        {similar.length > 0 && (
+          <Card>
+            <SectionTitle hint="by holdings overlap">
+              Most similar funds
+            </SectionTitle>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-left text-xs text-muted">
+                  <th className="py-1 font-medium">Fund</th>
+                  <th className="py-1 text-right font-medium">Shared</th>
+                  <th className="py-1 text-right font-medium">Overlap</th>
+                </tr>
+              </thead>
+              <tbody>
+                {similar.map((s) => (
+                  <tr key={s.code} className="border-b last:border-0">
+                    <td className="py-1.5">
+                      <Link
+                        href={`/funds/${s.code}`}
+                        className="font-medium text-accent hover:underline"
+                      >
+                        {s.code}
+                      </Link>
+                      <span className="ml-2 text-muted">
+                        {(s.title ?? "").slice(0, 30)}
+                      </span>
+                    </td>
+                    <td className="tnum py-1.5 text-right text-muted">
+                      {s.shared}
+                    </td>
+                    <td className="tnum py-1.5 text-right font-medium">
+                      {num(s.overlap, 0)}%
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="mt-3 text-xs text-muted">
+              Overlap = share of portfolio held in the same stocks at the same
+              weight (Σ min weight). A high figure means near-identical books —
+              holdings-based herding, independent of the return-based
+              closet-index signal.
+            </p>
+          </Card>
+        )}
       </div>
     </div>
   );
