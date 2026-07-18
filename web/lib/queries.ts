@@ -207,10 +207,123 @@ export async function getMarketAggregate(): Promise<{
 }
 
 export async function getHoldingsCoverage(): Promise<number> {
-  const rows = await sql`
-    SELECT COUNT(DISTINCT code) AS n FROM fund_holdings
-    WHERE period = (SELECT MAX(period) FROM fund_holdings)`;
+  // every fund that has ever disclosed a book, not just the latest period
+  const rows = await sql`SELECT COUNT(DISTINCT code) AS n FROM fund_holdings`;
   return Number(rows[0].n);
+}
+
+// Ownership (which funds hold a stock) is complete; position *weights*
+// only parse cleanly for a subset of KAP PDF templates so far. Surface
+// that honestly rather than implying every weight is known.
+export async function getWeightCoverage(): Promise<{
+  withWeights: number;
+  total: number;
+}> {
+  const rows = await sql`
+    SELECT COUNT(DISTINCT code) AS total,
+           COUNT(DISTINCT code) FILTER (WHERE weight_pct > 0) AS with_weights
+    FROM fund_holdings`;
+  return {
+    withWeights: Number(rows[0].with_weights),
+    total: Number(rows[0].total),
+  };
+}
+
+// --- stock <-> fund explorer ---
+
+export type StockInfo = {
+  ticker: string;
+  name: string | null;
+  sector: string | null;
+  industry: string | null;
+  city: string | null;
+};
+
+export async function getStock(ticker: string): Promise<StockInfo | null> {
+  const t = ticker.toUpperCase();
+  const rows = await sql`
+    SELECT ticker, title AS name, sector, industry, city
+    FROM stocks WHERE ticker = ${t} LIMIT 1`;
+  if (rows.length === 0) return null;
+  const r = rows[0];
+  return {
+    ticker: r.ticker,
+    name: r.name,
+    sector: r.sector,
+    industry: r.industry,
+    city: r.city,
+  };
+}
+
+export type StockOwner = {
+  code: string;
+  title: string | null;
+  category: string | null;
+  weight_pct: number | null;
+  value: number | null;
+  aum: number | null;
+};
+
+// Which funds hold this stock in their most recent disclosed book — the
+// stock->fund direction the explorer is built around. Funds file KAP
+// reports at different times, so "latest" means each fund's own latest
+// period (a single global MAX(period) would show only whoever filed
+// most recently).
+export async function getStockOwners(ticker: string): Promise<StockOwner[]> {
+  const t = ticker.toUpperCase();
+  const rows = await sql`
+    WITH latest AS (
+      SELECT code, MAX(period) AS mp FROM fund_holdings GROUP BY code
+    )
+    SELECT h.code, f.title, f.category, h.weight_pct, h.value, m.aum
+    FROM fund_holdings h
+    JOIN latest l ON l.code = h.code AND l.mp = h.period
+    LEFT JOIN funds f ON f.code = h.code
+    LEFT JOIN dash_metrics m ON m.code = h.code
+    WHERE h.ticker = ${t}
+    ORDER BY h.weight_pct DESC NULLS LAST`;
+  return rows.map((r) => ({
+    code: r.code,
+    title: r.title,
+    category: r.category,
+    weight_pct: n(r.weight_pct),
+    value: n(r.value),
+    aum: n(r.aum),
+  }));
+}
+
+export type CoveredStock = {
+  ticker: string;
+  name: string | null;
+  sector: string | null;
+  n_funds: number;
+  avg_weight: number | null;
+};
+
+// Every BIST equity held by at least one fund in the latest period —
+// the browsable entry point to the explorer, ranked by ownership breadth.
+export async function getCoveredStocks(): Promise<CoveredStock[]> {
+  const rows = await sql`
+    WITH latest AS (
+      SELECT code, MAX(period) AS mp FROM fund_holdings GROUP BY code
+    ),
+    book AS (
+      SELECT h.* FROM fund_holdings h
+      JOIN latest l ON l.code = h.code AND l.mp = h.period
+    )
+    SELECT b.ticker, MAX(s.title) AS name, MAX(s.sector) AS sector,
+           COUNT(DISTINCT b.code) AS n_funds, AVG(b.weight_pct) AS avg_weight
+    FROM book b
+    JOIN stocks s ON s.ticker = b.ticker
+    GROUP BY b.ticker
+    ORDER BY COUNT(DISTINCT b.code) DESC, MAX(b.weight_pct) DESC NULLS LAST`;
+  return rows.map((r) => ({
+    ticker: r.ticker,
+    name: r.name,
+    sector: r.sector,
+    n_funds: Number(r.n_funds),
+    avg_weight: n(r.avg_weight),
+  }));
 }
 
 export async function getCrowding(
@@ -219,17 +332,22 @@ export async function getCrowding(
   { ticker: string; name: string | null; n_funds: number; avg_weight: number }[]
 > {
   const rows = await sql`
-    SELECT h.ticker,
+    WITH latest AS (
+      SELECT code, MAX(period) AS mp FROM fund_holdings GROUP BY code
+    ),
+    book AS (
+      SELECT h.* FROM fund_holdings h
+      JOIN latest l ON l.code = h.code AND l.mp = h.period
+    )
+    SELECT b.ticker,
            MAX(s.title) AS name,
-           COUNT(*) AS n_funds,
-           AVG(h.weight_pct) AS avg_weight
-    FROM fund_holdings h
-    JOIN stocks s ON s.ticker = h.ticker      -- real BIST equities only
-    WHERE h.period = (SELECT MAX(period) FROM fund_holdings)
-      AND h.weight_pct IS NOT NULL AND h.weight_pct > 0
-    GROUP BY h.ticker
-    HAVING COUNT(*) >= 2
-    ORDER BY COUNT(*) DESC, AVG(h.weight_pct) DESC
+           COUNT(DISTINCT b.code) AS n_funds,
+           AVG(b.weight_pct) AS avg_weight
+    FROM book b
+    JOIN stocks s ON s.ticker = b.ticker       -- real BIST equities only
+    GROUP BY b.ticker
+    HAVING COUNT(DISTINCT b.code) >= 2
+    ORDER BY COUNT(DISTINCT b.code) DESC, MAX(b.weight_pct) DESC NULLS LAST
     LIMIT ${limit}`;
   return rows.map((r) => ({
     ticker: r.ticker,

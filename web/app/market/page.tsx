@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   getCategoryFlows,
   getSectors,
@@ -183,8 +184,18 @@ export default async function MarketPage() {
               </thead>
               <tbody>
                 {crowding.map((c) => (
-                  <tr key={c.ticker} className="border-b last:border-0">
-                    <td className="py-2 font-medium">{c.ticker}</td>
+                  <tr
+                    key={c.ticker}
+                    className="border-b last:border-0 hover:bg-accent-soft/40"
+                  >
+                    <td className="py-2 font-medium">
+                      <Link
+                        href={`/stocks/${c.ticker}`}
+                        className="text-accent hover:underline"
+                      >
+                        {c.ticker}
+                      </Link>
+                    </td>
                     <td className="py-2 text-muted">
                       {(c.name ?? "").slice(0, 40)}
                     </td>

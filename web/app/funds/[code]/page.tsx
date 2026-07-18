@@ -189,12 +189,23 @@ export default async function FundPage({
               <tbody>
                 {holdings.slice(0, 12).map((h, i) => (
                   <tr key={i} className="border-b last:border-0">
-                    <td className="py-1.5 font-medium">{h.ticker ?? "—"}</td>
+                    <td className="py-1.5 font-medium">
+                      {h.ticker ? (
+                        <Link
+                          href={`/stocks/${h.ticker}`}
+                          className="text-accent hover:underline"
+                        >
+                          {h.ticker}
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                     <td className="py-1.5 text-muted">
                       {(h.name ?? "").slice(0, 28)}
                     </td>
                     <td className="tnum py-1.5 text-right">
-                      {num(h.weight_pct, 1)}%
+                      {h.weight_pct != null ? `${num(h.weight_pct, 1)}%` : "—"}
                     </td>
                   </tr>
                 ))}
