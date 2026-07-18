@@ -105,6 +105,20 @@ presentation tables by a scheduled nightly pipeline.
   benchmark staleness, classification); non-zero exit for schedulers.
 - CI ([ci.yml](../.github/workflows/ci.yml)): unit tests + import smoke
   on every push, on Linux.
+- **Durable snapshots & reproducibility**
+  ([snapshot.yml](../.github/workflows/snapshot.yml) →
+  [scripts/snapshot.py](../scripts/snapshot.py)): the Actions cache is
+  fast but evictable, and the forward-only KAP history is irreplaceable.
+  Weekly (Sun 04:00 UTC) the DB is `VACUUM INTO`'d to a clean single
+  file, integrity-checked (`PRAGMA quick_check`) and floor-guarded
+  (refuses to publish a truncated DB), zstd-compressed, and uploaded to
+  a **GitHub Release** (`snapshot-YYYY-MM-DD`) with a JSON manifest. The
+  manifest freezes a **data hash** (`db_sha256`) and a **code hash**
+  (`git_sha`): to cite a finding, reference its snapshot tag and the
+  exact data + code are pinned. Keeps the newest 8; older tags pruned.
+  *Restore*: `gh release download <tag> --pattern '*.zst'`, then
+  `zstd -d funds-snapshot.db.zst -o data/funds.db`. Verify against the
+  manifest's `db_sha256` before trusting it.
 
 ## The two-surfaces rule (durable)
 

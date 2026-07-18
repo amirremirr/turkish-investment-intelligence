@@ -12,9 +12,27 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
 from datetime import date
 
 import pandas as pd
+
+
+def _provenance(conn) -> tuple[str, str | None]:
+    """Code + data fingerprint so a generated report is traceable back
+    to the exact commit and data vintage. The durable, hash-frozen copy
+    is the weekly snapshot release (scripts/snapshot.py); this is the
+    lightweight pointer to it."""
+    try:
+        sha = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"], text=True).strip()
+    except Exception:
+        sha = "unknown"
+    try:
+        as_of = conn.execute("SELECT MAX(date) FROM prices").fetchone()[0]
+    except sqlite3.OperationalError:
+        as_of = None
+    return sha, as_of
 
 
 def _table(conn, name, index_col=None):
@@ -147,5 +165,11 @@ def build_report(conn: sqlite3.Connection) -> str:
     if counts:
         for t, n in counts.items():
             lines.append(f"- {t}: {n:,} rows")
-    lines += [f"- report generated: {today}", ""]
+    sha, as_of = _provenance(conn)
+    lines += [
+        f"- report generated: {today}",
+        f"- provenance: code `{sha}` · data as-of {as_of or 'n/a'} "
+        "(reproducible from the matching weekly DB snapshot release)",
+        "",
+    ]
     return "\n".join(lines)

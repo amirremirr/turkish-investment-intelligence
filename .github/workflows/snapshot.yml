@@ -1,0 +1,69 @@
+name: DB snapshot
+
+# Durable weekly backup of the compute database. The DB otherwise lives
+# only in the Actions cache (evictable) — this uploads a clean copy plus
+# a data+code manifest to a GitHub Release, which persists. Each release
+# is a reproducibility freeze: db_sha256 (data) + git_sha (code).
+
+on:
+  schedule:
+    - cron: "0 4 * * 0" # Sundays 04:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write # create/delete releases
+
+concurrency:
+  group: db-snapshot
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore database from cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/funds.db
+          key: funds-db-none # never matches -> forces restore-keys
+          restore-keys: funds-db-
+
+      - name: Require a database
+        run: |
+          test -f data/funds.db || {
+            echo "::error::No DB in the Actions cache — run the daily "\
+            "pipeline (bootstrap) first."; exit 1; }
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build snapshot + manifest (integrity-checked, floor-guarded)
+        run: python scripts/snapshot.py
+
+      - name: Compress
+        run: zstd -19 -T0 -q -f funds-snapshot.db -o funds-snapshot.db.zst
+
+      - name: Publish to a GitHub Release
+        run: |
+          TAG="snapshot-$(date -u +%Y-%m-%d)"
+          NOTES="$(printf '```json\n%s\n```' "$(cat snapshot_manifest.json)")"
+          gh release create "$TAG" \
+              funds-snapshot.db.zst snapshot_manifest.json \
+              --title "DB snapshot $(date -u +%Y-%m-%d)" --notes "$NOTES" \
+            || gh release upload "$TAG" \
+              funds-snapshot.db.zst snapshot_manifest.json --clobber
+
+      - name: Prune old snapshots (keep the newest 8)
+        run: |
+          gh release list --limit 200 --json tagName,createdAt \
+            --jq 'map(select(.tagName|startswith("snapshot-")))
+                  | sort_by(.createdAt) | reverse | .[8:] | .[].tagName' \
+          | while read -r tag; do
+              [ -n "$tag" ] && gh release delete "$tag" --yes --cleanup-tag \
+                || true
+            done

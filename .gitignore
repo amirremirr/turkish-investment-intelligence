@@ -4,6 +4,8 @@ data/
 *.db
 *.db-wal
 *.db-shm
+*.zst
+snapshot_manifest.json
 .venv/
 *.csv
 logs/

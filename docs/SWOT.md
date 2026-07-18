@@ -24,10 +24,12 @@ same day:
 - **Single scheduler** — the local Windows daily task was deleted;
   GitHub Actions is the sole pipeline owner (divergent-DB risk closed).
 
-Accepted but structural (tracked below / roadmap): cache-backed
-authoritative DB, thin operational CI, four-factor model simplicity,
-multiple-testing corrections, fund-level panel designs, fee data,
-heuristic score weights, regime-table power. Position statement: this
+Accepted but structural (tracked below / roadmap): thin operational
+CI, four-factor model simplicity, multiple-testing corrections,
+fund-level panel designs, fee data, heuristic score weights,
+regime-table power. (The cache-backed authoritative DB — review
+priority #1 — is now durably backed by weekly hash-frozen snapshot
+releases; see Weakness 1.) Position statement: this
 is a **personal research workstation with transparent methods** — not
 institution-grade intelligence, and it should not be marketed as such.
 
@@ -47,13 +49,19 @@ institution-grade intelligence, and it should not be marketed as such.
 
 1. **Infrastructure**: SQLite single-writer for compute (by design —
    see [SUPABASE.md](SUPABASE.md)); the Next.js web app is live on the
-   Supabase serving copy. The remaining seam: the authoritative compute
-   DB lives in GitHub Actions cache (14-day artifact backup + local
-   copy) — **no durable snapshot store yet**. Planned fix: weekly
-   snapshot to Supabase Storage / GitHub Release, each snapshot frozen
-   with a **data+code hash** so any cited finding is reproducible.
-   Note the price of SQLite lock-in compounds monthly — acceptable
-   now, but it must stay a *priced* decision, not a forgotten one.
+   Supabase serving copy. The compute-DB seam is now *durably backed*:
+   a weekly job (`.github/workflows/snapshot.yml` → `scripts/snapshot.py`)
+   `VACUUM INTO`s a clean copy, integrity-checks and floor-guards it,
+   and uploads it plus a manifest to a **GitHub Release** — the manifest
+   freezes a **data+code hash** (`db_sha256` + `git_sha`) so any cited
+   finding is reproducible from the matching snapshot tag. The Actions
+   cache stops being the only home for the irreplaceable forward-only
+   KAP history. *Residual risk*: recovery point is up to one week; the
+   snapshot restores from the same cache, so it can't recover from a
+   silent mid-week corruption that also poisons the cache (mitigated by
+   the pre-upload integrity + row-count floors, not eliminated). Note
+   the price of SQLite lock-in still compounds monthly — acceptable now,
+   but it must stay a *priced* decision, not a forgotten one.
 2. **Testing depth**: unit tests now cover the critical logic (lag
    convention, flow guard, classifier, OLS, KAP parser), but coverage
    is thin elsewhere; no integration tests against live APIs.
