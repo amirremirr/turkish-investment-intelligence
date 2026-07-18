@@ -9,6 +9,7 @@ const LINKS = [
   { href: "/stocks", label: "Stocks" },
   { href: "/market", label: "Market" },
   { href: "/research", label: "Research" },
+  { href: "/status", label: "Data status" },
 ];
 
 export function Nav() {

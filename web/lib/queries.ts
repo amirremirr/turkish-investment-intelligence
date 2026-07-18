@@ -1,4 +1,5 @@
 import { sql } from "./db";
+import { intFmt } from "./format";
 
 // postgres.js returns numeric/bigint as strings to preserve precision;
 // coerce to JS numbers for our display purposes.
@@ -154,6 +155,128 @@ export async function getFundHoldings(code: string): Promise<Holding[]> {
     value: n(r.value),
     n_funds: n(r.n_funds),
   }));
+}
+
+export type DataSet = {
+  name: string;
+  coverage: string;
+  asOf: string | null;
+  note: string;
+  served: boolean;
+};
+
+// Every surface renders the same whether its data is current, months
+// stale, or 3% covered — which is exactly why the numbers can't be
+// trusted at a glance. This reports the real state of each dataset so
+// staleness and thin coverage are visible rather than implied.
+export async function getDataStatus(): Promise<{
+  sets: DataSet[];
+  pipelineAt: string | null;
+}> {
+  const one = async <T>(fn: () => Promise<T>, fallback: T): Promise<T> => {
+    try {
+      return await fn();
+    } catch {
+      return fallback;
+    }
+  };
+
+  const prices = await one(async () => {
+    const r = await sql`SELECT MAX(date) AS d,
+      (SELECT COUNT(DISTINCT code) FROM prices
+       WHERE date = (SELECT MAX(date) FROM prices)) AS n FROM prices`;
+    return { d: r[0].d as string, n: Number(r[0].n) };
+  }, { d: null as unknown as string, n: 0 });
+
+  const stocks = await one(async () => {
+    const r = await sql`SELECT MAX(date) AS d,
+      (SELECT COUNT(DISTINCT ticker) FROM stock_prices
+       WHERE date = (SELECT MAX(date) FROM stock_prices)) AS n
+      FROM stock_prices`;
+    return { d: r[0].d as string, n: Number(r[0].n) };
+  }, { d: null as unknown as string, n: 0 });
+
+  const hold = await one(async () => {
+    const r = await sql`SELECT COUNT(DISTINCT code) AS f,
+      COUNT(DISTINCT period) AS p, MAX(period) AS mp,
+      COUNT(DISTINCT code) FILTER (WHERE weight_pct > 0) AS w
+      FROM fund_holdings`;
+    return {
+      f: Number(r[0].f), p: Number(r[0].p),
+      mp: r[0].mp as string, w: Number(r[0].w),
+    };
+  }, { f: 0, p: 0, mp: "", w: 0 });
+
+  const cpi = await one(async () => {
+    const r = await sql`SELECT MAX(date) AS d FROM benchmarks
+      WHERE series = 'cpi_index'`;
+    return r[0].d as string;
+  }, null as string | null);
+
+  const bist = await one(async () => {
+    const r = await sql`SELECT MAX(date) AS d FROM benchmarks
+      WHERE series = 'bist100'`;
+    return r[0].d as string;
+  }, null as string | null);
+
+  const allocServed = await one(async () => {
+    await sql`SELECT 1 FROM allocations LIMIT 1`;
+    return true;
+  }, false);
+
+  const pipelineAt = await one(async () => {
+    const r = await sql`SELECT updated_at FROM system_status
+      WHERE key = 'pipeline_complete'`;
+    return (r[0]?.updated_at as string) ?? null;
+  }, null as string | null);
+
+  return {
+    pipelineAt,
+    sets: [
+      {
+        name: "Fund NAVs, returns & scores",
+        coverage: `${intFmt(prices.n)} funds`,
+        asOf: prices.d,
+        served: prices.n > 0,
+        note: "Daily NAVs from TEFAS. NAVs lag the market (+1 day domestic, +2 global) — corrected for in every beta and factor model.",
+      },
+      {
+        name: "Stock prices",
+        coverage: `${intFmt(stocks.n)} tickers`,
+        asOf: stocks.d,
+        served: stocks.n > 0,
+        note: "BIST closes via Yahoo. Freshness is judged against the index's own trading calendar, so holidays aren't mistaken for gaps.",
+      },
+      {
+        name: "Fund stock-level holdings (KAP)",
+        coverage: `${hold.f} funds · ${hold.w} with weights · ${hold.p} period${hold.p === 1 ? "" : "s"}`,
+        asOf: hold.mp || null,
+        served: hold.f > 0,
+        note: "Parsed from monthly KAP portfolio PDFs. This is the thinnest dataset here: coverage is forward-only and currently a small slice of the ~2,400-fund universe, so most fund pages have no book yet.",
+      },
+      {
+        name: "Asset-class allocations",
+        coverage: allocServed ? "published" : "NOT published to the serving DB",
+        asOf: null,
+        served: allocServed,
+        note: "Daily equity/bond/cash/FX weights exist for ~2,400 funds in the warehouse but are not served to this site yet — which is why fund pages show no composition breakdown.",
+      },
+      {
+        name: "Macro (CPI, policy & deposit rates)",
+        coverage: "TCMB EVDS",
+        asOf: cpi,
+        served: !!cpi,
+        note: "TÜİK rebased CPI and retired the old series, which kept returning valid-looking but frozen data. Now sourced from the continuing 2003=100 index; the vintage is labelled wherever inflation is shown.",
+      },
+      {
+        name: "Benchmarks (BIST100, gold, FX)",
+        coverage: "index & FX series",
+        asOf: bist,
+        served: !!bist,
+        note: "Used as the factor set for betas, alpha and the closet-index screen.",
+      },
+    ],
+  };
 }
 
 export type CoveredFund = {
