@@ -25,12 +25,13 @@ same day:
   GitHub Actions is the sole pipeline owner (divergent-DB risk closed).
 
 Accepted but structural (tracked below / roadmap): four-factor model
-simplicity, multiple-testing corrections, fund-level panel designs,
-fee data, heuristic score weights, regime-table power. (Review
-priority #1 — the cache-backed authoritative DB — is now durably
-backed by weekly hash-frozen snapshot releases, see Weakness 1;
+simplicity, fee data, heuristic score weights, regime-table power.
+(Review priority #1 — the cache-backed authoritative DB — is now
+durably backed by weekly hash-frozen snapshot releases, see Weakness 1;
 priority #2 — thin operational CI — is addressed by the twice-daily
-source-contract canary, see Weakness 2.) Position statement: this
+source-contract canary, see Weakness 2; priority #3 — multiple-testing
+corrections and fund-level panels — is the rigor gate in Weakness 6.)
+Position statement: this
 is a **personal research workstation with transparent methods** — not
 institution-grade intelligence, and it should not be marketed as such.
 
@@ -79,8 +80,18 @@ institution-grade intelligence, and it should not be marketed as such.
 5. **KAP holdings**: forward-only history; flaky export endpoint
    (retry/rescan cycles); brute-force ID scanning; template-dependent
    parser (breaks loudly, not silently).
-6. **Statistics**: residual diagnostics not implemented; cash-carry
-   alpha requires category context (documented).
+6. **Statistics**: a rigor gate now precedes external citation
+   (`tefaslab/rigor.py`, `research rigor`): multiple-testing control
+   (Bonferroni + Benjamini-Hochberg FDR) on the fund-alpha cross-section
+   — the naive ~369 "significant" alphas collapse to ~4 under FDR; a
+   cash factor + jump-clipping so deposit yield and NAV resets stop
+   reading as alpha; AUM-weighted category returns; mandate-aware
+   benchmarks; and a fund-level panel (FE, week-clustered SE) under
+   which the 63-day performance-chasing t falls from ~4.3 to ~1.2.
+   *Open*: the closet-index study's alpha column still uses the naive
+   model (not yet reconciled to the cash-factor/clip corrections — the
+   "31 closet funds" headline needs a recheck before citation); residual
+   diagnostics still not implemented; single-regime sample limits power.
 7. **Product**: no auth/multi-tenancy/API; Streamlit UX ceiling.
 
 ## Opportunities

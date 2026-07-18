@@ -20,7 +20,7 @@ import sys
 from . import (benchmarks, classify, compare, db, evds, factors, flows,
                health, ingest, intraday, kap, memo, metrics, ownership,
                pipeline, publish, quality, regime, report, research,
-               rolling, smartmoney, stocks)
+               rigor, rolling, smartmoney, stocks)
 
 
 def _parse_date(s: str) -> date:
@@ -359,6 +359,32 @@ def cmd_research(args) -> None:
         print(detail.head(10).round(3).to_string())
         print("\n== most active ==")
         print(detail.tail(10).round(3).to_string())
+    elif args.study == "gate":
+        s, survivors = rigor.alpha_gate(conn)
+        print("Fund alpha under multiple-testing control "
+              "(scanning ~500 funds finds ~25 'significant' by chance):\n")
+        for k, v in s.items():
+            print(f"  {k:<22} {v}")
+        print("\n== alphas that survive Benjamini-Hochberg FDR 5% ==")
+        pd.set_option("display.max_colwidth", 45)
+        print(survivors.head(20).round(3).to_string()
+              if not survivors.empty else "  (none — no citable skill)")
+    elif args.study == "catret":
+        print("AUM-weighted vs equal-weighted category returns "
+              "(what the representative lira vs fund earned):\n")
+        print(rigor.category_returns(conn).round(3).to_string())
+    elif args.study == "mandate":
+        print("Each category vs its MANDATE benchmark "
+              "(equity->BIST, cash funds->deposit rate):\n")
+        print(rigor.mandate_excess(conn).round(3).to_string())
+    elif args.study == "panel":
+        res, panel = rigor.performance_chasing_panel(conn, args.category)
+        print(f"Performance chasing — fund panel (FE, week-clustered SE), "
+              f"{args.category}, 63d trailing:\n")
+        for k, v in res.items():
+            print(f"  {k:<14} {v}")
+    elif args.study == "rigor":
+        print(rigor.summary(conn))
     conn.close()
 
 
@@ -546,7 +572,8 @@ def main() -> None:
     p = sub.add_parser("research", help="run a research study")
     p.add_argument("study", choices=["flows", "flows-by-category",
                                      "flows-oos", "chasing", "closet",
-                                     "diagnostics"])
+                                     "diagnostics", "gate", "catret",
+                                     "mandate", "panel", "rigor"])
     p.add_argument("--category", default="Equity Turkey")
     p.add_argument("--regime", choices=["high_vol", "low_vol"],
                    help="volatility-regime subsample (flows study)")

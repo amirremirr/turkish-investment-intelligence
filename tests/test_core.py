@@ -346,3 +346,46 @@ def test_source_check_unexpected_error_is_down():
     def boom():
         raise RuntimeError("kaboom")
     assert sc._run(boom) == (sc.DOWN, "unexpected RuntimeError: kaboom")
+
+
+# ------------------------------------------------- statistical rigor
+
+from tefaslab import rigor  # noqa: E402
+
+
+def test_benjamini_hochberg_canonical():
+    # Benjamini-Hochberg (1995) worked example: at FDR 5% exactly the
+    # four smallest of these fifteen p-values are rejected, threshold
+    # p=0.0095.
+    p = np.array([0.0001, 0.0004, 0.0019, 0.0095, 0.0201, 0.0278, 0.0298,
+                  0.0344, 0.0459, 0.3240, 0.4262, 0.5719, 0.6528, 0.7590,
+                  1.0])
+    rej, pth = rigor.benjamini_hochberg(p, 0.05)
+    assert rej.sum() == 4
+    assert abs(pth - 0.0095) < 1e-9
+    assert rej[:4].all() and not rej[4:].any()
+
+
+def test_bonferroni_and_two_sided_p():
+    rej, th = rigor.bonferroni([0.001, 0.02, 0.04, 0.5], 0.05)
+    assert abs(th - 0.0125) < 1e-9            # 0.05 / 4
+    assert rej.tolist() == [True, False, False, False]
+    assert abs(rigor.two_sided_p(1.959964)[0] - 0.05) < 1e-3  # ~1.96 -> 0.05
+    assert rigor.two_sided_p(0.0)[0] == 1.0
+
+
+def test_panel_fe_recovers_slope():
+    rng = np.random.default_rng(3)
+    G, T, beta = 40, 30, 1.5
+    funds, dates, xs, ys = [], [], [], []
+    for i in range(G):
+        a = rng.normal(0, 5)                  # large fund fixed effect
+        for t in range(T):
+            x = rng.normal(0, 1)
+            funds.append(i); dates.append(t); xs.append(x)
+            ys.append(a + beta * x + rng.normal(0, 0.5))
+    res = rigor.panel_fe_cluster(np.array(ys), np.array(xs),
+                                 np.array(funds), np.array(dates))
+    assert abs(res["beta"] - beta) < 0.1      # FE demean recovers slope
+    assert res["n_funds"] == G and res["n_clusters"] == T
+    assert abs(res["t"]) > 5
