@@ -82,7 +82,10 @@ jobs:
         run: |
           test -f data/funds.db || {
             echo "::error::No database in cache — run mode=bootstrap first";             exit 1; }
-          python -m tefaslab holdings backfill --count 6000
+          # Deliberately modest: the floor persists, so re-running walks
+          # further back. Better to measure throughput over a couple of
+          # runs than launch one job that might sit for hours.
+          python -m tefaslab holdings backfill --count 2000
           python -m tefaslab holdings stats
           python -m tefaslab daily --skip-raw
           python -m tefaslab publish
