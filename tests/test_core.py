@@ -320,6 +320,8 @@ def test_kap_number_format():
     assert kap._num("1,47", ",") == 1.47
     assert kap._num("5.98", ".") == 5.98
     assert kap._num("1,234,567.89", ".") == 1234567.89
+    assert kap._num("0.02%", ".") == 0.02       # Garanti template suffixes %
+    assert kap._num("1,47%", ",") == 1.47
 
 
 # ------------------------------------------- source-contract canary

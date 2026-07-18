@@ -134,7 +134,9 @@ def _extract_pdf(raw: bytes) -> bytes:
 def _num(s: str, dec: str = ".") -> float | None:
     """Parse a number in the document's detected format. Turkish PDFs use
     '.' for thousands and ',' for decimal (1.234.567,89); others are the
-    reverse. Getting this wrong turns '1,47' into 147."""
+    reverse. Getting this wrong turns '1,47' into 147. Some templates
+    suffix a literal '%' on the weight column ('0.02%')."""
+    s = s.strip().rstrip("%").strip()
     if not re.search(r"\d", s):
         return None
     if dec == ",":
@@ -237,7 +239,7 @@ def parse_pdf_holdings(pdf_bytes: bytes) -> tuple[str | None, list[dict]]:
                              if ISIN_RE.match(w["text"])), None)
                 if not isin:
                     continue
-                ticker = (ws[0]["text"] if ws[0]["x0"] < 60
+                ticker = (ws[0]["text"].split(".")[0] if ws[0]["x0"] < 60
                           and not ISIN_RE.match(ws[0]["text"]) else None)
                 isin_x = next(w["x0"] for w in ws if w["text"] == isin)
                 name = " ".join(
@@ -264,7 +266,20 @@ def parse_pdf_holdings(pdf_bytes: bytes) -> tuple[str | None, list[dict]]:
                                  "name": name[:80] or None,
                                  "quantity": quantity, "value": value,
                                  "weight_pct": weight})
-    return fund_code, holdings
+    # Some templates (the portrait Garanti form) list each purchase lot
+    # of a security on its own line — collapse them into one position per
+    # ISIN, summing value/weight/quantity. A no-op for one-row-per-ISIN
+    # templates.
+    agg: dict = {}
+    for h in holdings:
+        k = h["isin"]
+        if k in agg:
+            a = agg[k]
+            for f in ("value", "weight_pct", "quantity"):
+                a[f] = (a[f] or 0) + (h[f] or 0)
+        else:
+            agg[k] = h
+    return fund_code, list(agg.values())
 
 
 def daily_update(conn: sqlite3.Connection, max_ids: int = 2500) -> dict:
