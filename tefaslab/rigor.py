@@ -105,28 +105,27 @@ def benjamini_hochberg(pvals, alpha: float = 0.05) -> tuple[np.ndarray, float]:
     return p <= pth, float(pth)
 
 
-def _cash_factor(conn) -> pd.DataFrame:
-    """Daily risk-free accrual as a factor column, so a fund that merely
-    earns the deposit rate loads on cash (beta~1) instead of showing the
-    rate as alpha."""
-    r = bm.load_series(conn, "deposit_3m")            # annualized %
+def _cash_daily(conn, rate_series: str = "deposit_3m") -> pd.Series:
+    """Daily risk-free return from an annualized deposit rate (%),
+    forward-filled onto a daily calendar. Used as the excess-return
+    baseline so cash-like funds read ~0 alpha."""
+    r = bm.load_series(conn, rate_series)             # annualized %
     full = pd.date_range(r.index.min(), r.index.max(), freq="D")
     r = r.reindex(r.index.union(full)).sort_index().ffill()
-    daily = (1 + r / 100.0) ** (1 / TRADING_DAYS) - 1
-    return daily.to_frame("cash")
+    return ((1 + r / 100.0) ** (1 / TRADING_DAYS) - 1).rename("cash")
 
 
 def alpha_gate(conn: sqlite3.Connection, fdr: float = 0.05,
                min_obs: int = 126) -> tuple[dict, pd.DataFrame]:
     """Multiple-testing gate on factor-model alpha across all funds.
 
-    The factor model is augmented with a cash factor and restructuring
+    The model is estimated in excess-of-cash terms and restructuring
     jumps are clipped, so 'alpha' is genuine outperformance, not the
     deposit rate or a NAV reset. Returns a summary dict and the funds
     whose alpha survives FDR control — the only alphas defensible to
     cite as skill."""
     betas = factors.all_factor_betas(conn, min_obs=min_obs,
-                                     extra_factors=_cash_factor(conn),
+                                     rf_daily=_cash_daily(conn),
                                      clip_returns=MAX_DAILY_MOVE)
     betas = betas[np.isfinite(betas["alpha_t"])].copy()
     p = two_sided_p(betas["alpha_t"].to_numpy())
@@ -228,10 +227,8 @@ def _bench_ret(conn, series: str, index: pd.Index) -> pd.Series:
 
 
 def _cash_ret(conn, index: pd.Index, rate_series: str = "deposit_3m") -> pd.Series:
-    """Per-trading-day accrual from an annualized deposit rate (%)."""
-    r = bm.load_series(conn, rate_series)
-    r = r.reindex(r.index.union(index)).sort_index().ffill().reindex(index)
-    return (1 + r / 100.0) ** (1 / TRADING_DAYS) - 1
+    """Daily cash return aligned to a given index (mandate hurdle)."""
+    return _cash_daily(conn, rate_series).reindex(index)
 
 
 def mandate_excess(conn: sqlite3.Connection,

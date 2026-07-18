@@ -30,7 +30,7 @@ Five reproducible studies — start here:
 |---|---|
 | Retail equity-fund flows are mildly **contrarian** | NW t=−2.5 at 21d; calm markets only |
 | Investors chase **quarterly** winners | 63-day trailing returns, NW t=4.3 |
-| **31 closet index funds** among 192 large "active" equity funds | R²≥0.85, β≈1, α≈0 |
+| **52 closet index funds** among 236 large "active" equity funds | R²≥0.85, β≈1, α≤0 (excess-of-cash) |
 | TEFAS **NAVs lag the market** (+1d/+2d) | index-fund β: 0.12 same-day → 0.995 lagged |
 | The 2026 equity rally is **price effect, not conviction** | AUM share ↑ 5.4→9% with negative flows |
 

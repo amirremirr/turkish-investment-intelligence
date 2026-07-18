@@ -163,8 +163,15 @@ def performance_chasing(conn: sqlite3.Connection,
 
 def closet_index(conn: sqlite3.Connection, min_aum: float = 100e6,
                  min_obs: int = 126) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Classify Equity Turkey funds by how active they really are."""
-    betas = factors.all_factor_betas(conn, min_obs=min_obs)
+    """Classify Equity Turkey funds by how active they really are.
+
+    Uses the rigor-corrected factor model (cash factor + restructuring
+    jump clipping) so the alpha column is a true excess, not the naive
+    over-zero figure, and NAV resets don't distort beta/R^2."""
+    from . import rigor
+    betas = factors.all_factor_betas(
+        conn, min_obs=min_obs, rf_daily=rigor._cash_daily(conn),
+        clip_returns=rigor.MAX_DAILY_MOVE)
     aum = pd.read_sql_query(
         """
         SELECT p.code, p.aum FROM prices p

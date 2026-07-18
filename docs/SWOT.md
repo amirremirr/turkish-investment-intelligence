@@ -81,17 +81,26 @@ institution-grade intelligence, and it should not be marketed as such.
    (retry/rescan cycles); brute-force ID scanning; template-dependent
    parser (breaks loudly, not silently).
 6. **Statistics**: a rigor gate now precedes external citation
-   (`tefaslab/rigor.py`, `research rigor`): multiple-testing control
-   (Bonferroni + Benjamini-Hochberg FDR) on the fund-alpha cross-section
-   — the naive ~369 "significant" alphas collapse to ~4 under FDR; a
-   cash factor + jump-clipping so deposit yield and NAV resets stop
-   reading as alpha; AUM-weighted category returns; mandate-aware
-   benchmarks; and a fund-level panel (FE, week-clustered SE) under
-   which the 63-day performance-chasing t falls from ~4.3 to ~1.2.
-   *Open*: the closet-index study's alpha column still uses the naive
-   model (not yet reconciled to the cash-factor/clip corrections — the
-   "31 closet funds" headline needs a recheck before citation); residual
-   diagnostics still not implemented; single-regime sample limits power.
+   (`tefaslab/rigor.py`, `research rigor`). Alpha is estimated in
+   **excess-of-cash** terms (risk-free subtracted from fund and factors
+   — a cash *factor* is near-constant and collinear with the intercept,
+   which inflates alpha; excess returns is the correct fix) with
+   restructuring NAV jumps clipped. Under multiple-testing control
+   (Bonferroni + Benjamini-Hochberg FDR) on the ~2,270-fund alpha
+   cross-section, **no fund's alpha survives** — only ~94 are even
+   nominally significant, *fewer* than the ~114 expected by chance:
+   **no individual manager skill is citable on this sample.** Also:
+   AUM-weighted category returns; mandate-aware benchmarks (Money Market
+   +1.4pp over cash, not the naive +40.9pp); a fund-level panel (fund
+   FE, week-clustered SE) under which the 63-day performance-chasing t
+   falls from ~4.3 to ~1.2 (does not survive). The closet-index study is
+   now **reconciled** to the corrected model — 52 of 236 large equity
+   funds run index-like with no positive alpha (was a stale "31 of 192"
+   on the naive model; the BIST30 index funds correctly read α≈0).
+   *Open*: residual diagnostics still not implemented; single-regime
+   sample limits power; alpha magnitudes are noisy (annualized
+   short-horizon intercepts) — the classification, not the α value, is
+   the robust signal.
 7. **Product**: no auth/multi-tenancy/API; Streamlit UX ceiling.
 
 ## Opportunities

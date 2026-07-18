@@ -57,9 +57,10 @@ TEFAS · KAP · EVDS · Yahoo  →  ETL (nightly, GitHub Actions)
    calm markets and only for domestic equity: a complacency phenomenon.
 3. **[Investors chase quarterly winners](docs/research/02-performance-chasing.md)** —
    flows respond to trailing 63-day returns (t≈3.0), not weekly moves.
-4. **[31 closet index funds identified](docs/research/03-closet-indexing.md)** —
-   of 192 large "active" equity funds, 31 run R²≥0.85 at β≈1 with ≈0
-   alpha, including major bank funds at R²>0.95 with *negative* alpha.
+4. **[~1 in 5 "active" equity funds is a closet indexer](docs/research/03-closet-indexing.md)** —
+   of 236 large "active" equity funds, 52 run R²≥0.85 at β≈1 with no
+   positive alpha (excess-of-cash, NAV resets clipped), including major
+   bank funds at R²>0.95.
 
 ## Getting started
 

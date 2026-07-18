@@ -25,8 +25,8 @@ const FINDINGS = [
     d: "Flows respond to trailing 63-day returns (t=4.3), not weekly moves — medium-term performance chasing.",
   },
   {
-    t: "31 closet index funds identified",
-    d: "Of 192 large “active” equity funds, 31 run R²≥0.85 at β≈1 with ≈0 alpha — index exposure at active fees.",
+    t: "~1 in 5 “active” equity funds is a closet indexer",
+    d: "Of 236 large active equity funds, 52 run R²≥0.85 at β≈1 with no positive alpha — index exposure sold at active fees.",
   },
   {
     t: "The TEFAS NAV timing lag",

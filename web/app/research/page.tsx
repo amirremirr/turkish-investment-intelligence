@@ -23,9 +23,9 @@ const NOTES = [
   {
     n: 3,
     file: "03-closet-indexing.md",
-    title: "31 closet index funds identified",
+    title: "~1 in 5 large “active” equity funds is a closet indexer",
     finding:
-      "Of 192 large “active” equity funds, 31 run R²≥0.85 with beta≈1 and near-zero alpha — including major bank funds at R²>0.95 with negative alpha. Index exposure sold at active fees.",
+      "Of 236 large “active” equity funds, 52 run R²≥0.85 with beta≈1 and no positive alpha — including major bank funds at R²>0.95. Alpha is measured excess-of-cash with NAV resets clipped, so the deposit rate isn’t mistaken for skill. Index exposure sold at active fees.",
   },
   {
     n: 4,

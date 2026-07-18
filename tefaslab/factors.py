@@ -134,23 +134,29 @@ def fund_factor_model(conn: sqlite3.Connection, code: str,
 
 def all_factor_betas(conn: sqlite3.Connection, days: int = 252,
                      min_obs: int = 60,
-                     extra_factors: pd.DataFrame | None = None,
+                     rf_daily: pd.Series | None = None,
                      clip_returns: float | None = None) -> pd.DataFrame:
     """Betas + alpha + R^2 for every fund with enough history (vectorized
     enough for ~2k funds).
 
-    extra_factors: already-lagged daily factor return columns to append
-    (e.g. a cash/risk-free factor, so cash-like funds don't read as
-    alpha). clip_returns: mask |daily return| beyond this as a
-    restructuring/split artefact before regressing. Both default off, so
-    existing callers are unchanged."""
+    rf_daily: a daily risk-free return series. When given, the model is
+    estimated in EXCESS-of-cash terms (rf subtracted from the fund and
+    from every factor), so alpha is return above the risk-free-plus-beta
+    benchmark — a cash-like fund reads ~0 alpha, an index fund reads ~0
+    alpha. (A cash *factor* would be near-constant and collinear with the
+    intercept, which blows alpha up; excess returns is the correct fix.)
+    clip_returns: mask |daily return| beyond this as a restructuring/
+    split artefact before regressing. Both default off, so existing
+    callers are unchanged."""
     prices = metrics.load_prices(conn)
     returns = prices.pct_change(fill_method=None).tail(days)
     if clip_returns is not None:
         returns = returns.mask(returns.abs() > clip_returns)
     fx = _factor_returns(conn).reindex(returns.index)
-    if extra_factors is not None:
-        fx = fx.join(extra_factors.reindex(returns.index))
+    if rf_daily is not None:
+        rf = rf_daily.reindex(returns.index).ffill()
+        returns = returns.sub(rf, axis=0)
+        fx = fx.sub(rf, axis=0)
     factor_names = list(fx.columns)
 
     returns_k = _compound(returns, K_DAYS)
