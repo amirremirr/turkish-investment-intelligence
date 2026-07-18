@@ -374,6 +374,49 @@ def test_bonferroni_and_two_sided_p():
     assert rigor.two_sided_p(0.0)[0] == 1.0
 
 
+# ------------------------------------------- trading calendar / gaps
+
+from tefaslab import market_calendar as mc  # noqa: E402
+
+
+def _market_db():
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE benchmarks(series TEXT, date TEXT, value REAL)")
+    conn.execute("CREATE TABLE stock_prices(ticker TEXT, date TEXT, close REAL)")
+    # two weeks Mon-Fri; the weekend 10/11 is simply absent from the index
+    open_days = ["2026-01-05", "2026-01-06", "2026-01-07", "2026-01-08",
+                 "2026-01-09", "2026-01-12", "2026-01-13"]
+    conn.executemany("INSERT INTO benchmarks VALUES('bist100', ?, 100)",
+                     [(d,) for d in open_days])
+    for d in open_days:                      # 10 tickers/day, 01-07 collapses
+        n = 1 if d == "2026-01-07" else 10
+        conn.executemany("INSERT INTO stock_prices VALUES(?, ?, 1.0)",
+                         [(f"T{i}", d) for i in range(n)])
+    conn.commit()
+    return conn
+
+
+def test_trading_calendar_is_holiday_aware():
+    conn = _market_db()
+    assert len(mc.trading_days(conn)) == 7
+    assert mc.latest_trading_day(conn) == "2026-01-13"
+    # sessions, not calendar days: Fri 01-09 -> Mon 01-13 is 2 sessions
+    # (12, 13), never the 4 intervening calendar days
+    assert mc.trading_days_between(conn, "2026-01-09", "2026-01-13") == 2
+    gr = mc.gap_report(conn)
+    assert gr["stock_lag_sessions"] == 0          # stocks current with index
+    assert [d for d, _ in gr["low_coverage_days"]] == ["2026-01-07"]
+
+
+def test_trading_calendar_flags_stale_but_not_weekend():
+    conn = _market_db()
+    conn.execute("DELETE FROM stock_prices WHERE date > '2026-01-09'")
+    conn.commit()
+    gr = mc.gap_report(conn)                       # stocks end Fri, index Mon
+    assert gr["stock_lag_sessions"] == 2          # two sessions, not 4 days
+
+
 def test_panel_fe_recovers_slope():
     rng = np.random.default_rng(3)
     G, T, beta = 40, 30, 1.5

@@ -100,9 +100,13 @@ presentation tables by a scheduled nightly pipeline.
   15-min; KAP disclosures near-real-time; TEFAS fund NAVs publish once
   per day (the 18:30 run already captures same-day NAVs); EVDS macro is
   daily/weekly/monthly.
-- `python -m tefaslab health` — 9 data-quality checks (freshness,
+- `python -m tefaslab health` — data-quality checks (freshness,
   coverage, impossible values, return outliers, month continuity,
-  benchmark staleness, classification); non-zero exit for schedulers.
+  benchmark staleness, classification, and holiday-aware **stock gap
+  detection** — freshness in market *sessions* and coverage collapses
+  judged only on days the BIST100 index actually traded, via
+  [market_calendar.py](../tefaslab/market_calendar.py)); non-zero exit
+  for schedulers.
 - CI ([ci.yml](../.github/workflows/ci.yml)): unit tests + import smoke
   on every push, on Linux.
 - **Source-contract canary**

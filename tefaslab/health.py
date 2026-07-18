@@ -12,6 +12,8 @@ from datetime import date, timedelta
 
 import pandas as pd
 
+from . import market_calendar
+
 OK, WARN, FAIL = "OK", "WARN", "FAIL"
 
 
@@ -46,6 +48,30 @@ def run_checks(conn: sqlite3.Connection) -> list[tuple[str, str, str]]:
     add(OK if stale_funds < 0.15 * n_funds else WARN,
         "stale funds", f"{stale_funds} funds with no price in 10+ days "
         "(closures/mergers are normal)")
+
+    # stock gap detection, holiday-aware: freshness is in *market
+    # sessions* (weekends/holidays don't count) and a coverage collapse
+    # is only flagged on a day the index actually traded.
+    if market_calendar.latest_trading_day(conn):
+        gr = market_calendar.gap_report(conn)
+        lag = gr["stock_lag_sessions"]
+        low = gr["low_coverage_days"]
+        if low:
+            status = FAIL
+            detail = (f"{len(low)} market-open day(s) with collapsed stock "
+                      f"coverage (median {gr['median_coverage']}): "
+                      f"{low[:3]}")
+        elif lag is not None and lag > 1:
+            status = WARN
+            detail = (f"stocks {lag} market sessions behind the index "
+                      f"(index {gr['latest_market_day']}, stocks "
+                      f"{gr['latest_stock_day']})")
+        else:
+            status = OK
+            detail = (f"stocks current with the index "
+                      f"({gr['latest_stock_day']}, {lag or 0} sessions "
+                      f"behind); median coverage {gr['median_coverage']}")
+        add(status, "stock gap detection", detail)
 
     bad_vals = conn.execute(
         "SELECT COUNT(*) FROM prices WHERE price <= 0 OR aum < 0").fetchone()[0]
