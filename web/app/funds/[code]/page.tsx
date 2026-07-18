@@ -5,6 +5,7 @@ import {
   getFundNav,
   getFundHoldings,
   getSimilarFunds,
+  getFundAttribution,
 } from "@/lib/queries";
 import { Card, Stat, Delta, SectionTitle, Bar } from "@/components/ui";
 import { Sparkline } from "@/components/sparkline";
@@ -53,10 +54,11 @@ export default async function FundPage({
   const fund = await getFund(code);
   if (!fund) notFound();
 
-  const [nav, holdings, similar] = await Promise.all([
+  const [nav, holdings, similar, attrib] = await Promise.all([
     getFundNav(code),
     getFundHoldings(code),
     getSimilarFunds(code).catch(() => []),
+    getFundAttribution(code).catch(() => []),
   ]);
 
   // downsample NAV to ~200 points for a compact SVG
@@ -79,6 +81,21 @@ export default async function FundPage({
   const consensusWeight = weighted
     .filter((h) => (h.n_funds ?? 0) >= 3)
     .reduce((s, h) => s + (h.weight_pct ?? 0), 0);
+
+  // Stock-selection attribution. Only locally-priced holdings carry a
+  // return, so report the share of book actually covered — otherwise the
+  // contributions read as explaining more than they do.
+  const attribPriced = attrib.filter((a) => a.contribution_pp != null);
+  const attribWeight = attribPriced.reduce((s, a) => s + (a.weight_pct ?? 0), 0);
+  const attribTotal = attribPriced.reduce(
+    (s, a) => s + (a.contribution_pp ?? 0), 0);
+  const bookWeight = weighted.reduce((s, h) => s + (h.weight_pct ?? 0), 0);
+  const movers = [...attribPriced.slice(0, 5), ...attribPriced.slice(-3)]
+    .filter((a, i, arr) => arr.findIndex((x) => x.ticker === a.ticker) === i);
+  // these come out of SQL already in percent / percentage points, so they
+  // must NOT go through pctPoints() (which scales a fraction by 100)
+  const pp = (x: number | null | undefined, d = 2) =>
+    x == null ? "—" : `${x >= 0 ? "+" : ""}${num(x, d)}pp`;
 
   return (
     <div className="space-y-8">
@@ -309,6 +326,65 @@ export default async function FundPage({
               weight (Σ min weight). A high figure means near-identical books —
               holdings-based herding, independent of the return-based
               closet-index signal.
+            </p>
+          </Card>
+        )}
+
+        {attribPriced.length >= 3 && (
+          <Card>
+            <SectionTitle
+              hint={`${num(attribWeight, 0)}% of book priced`}
+            >
+              What drove the month after
+            </SectionTitle>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-left text-xs text-muted">
+                  <th className="py-1 font-medium">Stock</th>
+                  <th className="py-1 text-right font-medium">Weight</th>
+                  <th className="py-1 text-right font-medium">Stock</th>
+                  <th className="py-1 text-right font-medium">Contribution</th>
+                </tr>
+              </thead>
+              <tbody>
+                {movers.map((a) => (
+                  <tr key={a.ticker} className="border-b last:border-0">
+                    <td className="py-1.5 font-medium">
+                      {a.ticker ? (
+                        <Link
+                          href={`/stocks/${a.ticker}`}
+                          className="text-accent hover:underline"
+                        >
+                          {a.ticker}
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="tnum py-1.5 text-right text-muted">
+                      {num(a.weight_pct, 1)}%
+                    </td>
+                    <td
+                      className={`tnum py-1.5 text-right ${signClass(a.stock_ret_pct)}`}
+                    >
+                      {num(a.stock_ret_pct, 1)}%
+                    </td>
+                    <td
+                      className={`tnum py-1.5 text-right font-medium ${signClass(a.contribution_pp)}`}
+                    >
+                      {pp(a.contribution_pp, 2)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="mt-3 text-xs text-muted">
+              Each holding&apos;s weight × its return in the month after the
+              report — {pp(attribTotal, 1)} in total from the{" "}
+              {num(attribWeight, 0)}% of the book that has local prices (of{" "}
+              {num(bookWeight, 0)}% disclosed). Foreign equities and bonds
+              have no local price and sit in the residual, so this explains
+              stock selection, not the whole return.
             </p>
           </Card>
         )}

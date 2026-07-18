@@ -198,6 +198,64 @@ export async function getSimilarFunds(code: string): Promise<SimilarFund[]> {
   }));
 }
 
+export type Attribution = {
+  ticker: string | null;
+  name: string | null;
+  weight_pct: number | null;
+  stock_ret_pct: number | null;
+  contribution_pp: number | null;
+};
+
+// Stock-selection attribution: each holding's contribution (weight x its
+// return) over the month AFTER the report date. Holdings without a local
+// price — foreign equities, bonds — have no return and fall into the
+// residual, so callers must show priced-weight coverage alongside this
+// or the numbers read as more complete than they are.
+export async function getFundAttribution(code: string): Promise<Attribution[]> {
+  const c = code.toUpperCase();
+  const rows = await sql`
+    WITH latest AS (
+      SELECT MAX(period) AS mp FROM fund_holdings WHERE code = ${c}
+    ),
+    win AS (
+      SELECT to_char((mp || '-01')::date + interval '1 month',
+                     'YYYY-MM-DD') AS m1,
+             to_char((mp || '-01')::date + interval '2 month',
+                     'YYYY-MM-DD') AS m2
+      FROM latest
+    ),
+    b AS (
+      SELECT h.ticker, h.name, h.weight_pct
+      FROM fund_holdings h, latest
+      WHERE h.code = ${c} AND h.period = latest.mp AND h.weight_pct > 0
+    ),
+    base AS (
+      SELECT DISTINCT ON (s.ticker) s.ticker, s.close
+      FROM stock_prices s, win
+      WHERE s.date < win.m1 ORDER BY s.ticker, s.date DESC
+    ),
+    post AS (
+      SELECT DISTINCT ON (s.ticker) s.ticker, s.close
+      FROM stock_prices s, win
+      WHERE s.date < win.m2 ORDER BY s.ticker, s.date DESC
+    )
+    SELECT b.ticker, b.name, b.weight_pct,
+           (post.close / base.close - 1) * 100 AS stock_ret_pct,
+           b.weight_pct * (post.close / base.close - 1) AS contribution_pp
+    FROM b
+    LEFT JOIN base ON base.ticker = b.ticker
+    LEFT JOIN post ON post.ticker = b.ticker
+    WHERE base.close IS NOT NULL AND base.close > 0
+    ORDER BY contribution_pp DESC NULLS LAST`;
+  return rows.map((r) => ({
+    ticker: r.ticker,
+    name: r.name,
+    weight_pct: n(r.weight_pct),
+    stock_ret_pct: n(r.stock_ret_pct),
+    contribution_pp: n(r.contribution_pp),
+  }));
+}
+
 export async function getFundCodes(limit = 60): Promise<string[]> {
   const rows = await sql`
     SELECT code FROM dash_metrics
