@@ -156,6 +156,41 @@ export async function getFundHoldings(code: string): Promise<Holding[]> {
   }));
 }
 
+export type CoveredFund = {
+  code: string;
+  title: string | null;
+  category: string | null;
+  positions: number;
+  weighted: number;
+};
+
+// Which funds actually have a disclosed book. KAP coverage is forward-only
+// and still small relative to the ~2.4k fund universe, so without a list
+// like this you have to click through dozens of funds to find one.
+export async function getCoveredFunds(): Promise<CoveredFund[]> {
+  const rows = await sql`
+    WITH latest AS (
+      SELECT code, MAX(period) AS mp FROM fund_holdings GROUP BY code
+    ),
+    book AS (
+      SELECT h.* FROM fund_holdings h
+      JOIN latest l ON l.code = h.code AND l.mp = h.period
+    )
+    SELECT b.code, f.title, f.category, COUNT(*) AS positions,
+           COUNT(*) FILTER (WHERE b.weight_pct > 0) AS weighted
+    FROM book b
+    LEFT JOIN funds f ON f.code = b.code
+    GROUP BY b.code, f.title, f.category
+    ORDER BY COUNT(*) FILTER (WHERE b.weight_pct > 0) DESC, COUNT(*) DESC`;
+  return rows.map((r) => ({
+    code: r.code,
+    title: r.title,
+    category: r.category,
+    positions: Number(r.positions),
+    weighted: Number(r.weighted),
+  }));
+}
+
 export type SimilarFund = {
   code: string;
   title: string | null;

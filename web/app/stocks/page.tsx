@@ -3,6 +3,7 @@ import {
   getCoveredStocks,
   getHoldingsCoverage,
   getWeightCoverage,
+  getCoveredFunds,
 } from "@/lib/queries";
 import { Card, SectionTitle } from "@/components/ui";
 import { num, intFmt } from "@/lib/format";
@@ -16,10 +17,11 @@ export const metadata = {
 };
 
 export default async function StocksPage() {
-  const [stocks, coverage, wcov] = await Promise.all([
+  const [stocks, coverage, wcov, funds] = await Promise.all([
     getCoveredStocks().catch(() => []),
     getHoldingsCoverage().catch(() => 0),
     getWeightCoverage().catch(() => ({ withWeights: 0, total: 0 })),
+    getCoveredFunds().catch(() => []),
   ]);
 
   return (
@@ -41,6 +43,56 @@ export default async function StocksPage() {
           </p>
         )}
       </div>
+
+      {funds.length > 0 && (
+        <Card>
+          <SectionTitle hint={`${funds.length} of the ~2,400 fund universe`}>
+            Funds with a disclosed book
+          </SectionTitle>
+          <p className="mb-3 text-sm text-muted">
+            KAP holdings are forward-only and still accumulating, so most
+            fund pages have no book yet. These are the ones that do — start
+            here rather than clicking through the screener.
+          </p>
+          <div className="max-h-80 overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-surface">
+                <tr className="border-b text-left text-xs text-muted">
+                  <th className="py-1 font-medium">Fund</th>
+                  <th className="py-1 font-medium">Category</th>
+                  <th className="py-1 text-right font-medium">Positions</th>
+                  <th className="py-1 text-right font-medium">Weighted</th>
+                </tr>
+              </thead>
+              <tbody>
+                {funds.map((f) => (
+                  <tr
+                    key={f.code}
+                    className="border-b last:border-0 hover:bg-accent-soft/40"
+                  >
+                    <td className="py-1.5">
+                      <Link
+                        href={`/funds/${f.code}`}
+                        className="font-medium text-accent hover:underline"
+                      >
+                        {f.code}
+                      </Link>
+                      <span className="ml-2 text-muted">
+                        {(f.title ?? "").slice(0, 34)}
+                      </span>
+                    </td>
+                    <td className="py-1.5 text-muted">{f.category ?? "—"}</td>
+                    <td className="tnum py-1.5 text-right">{f.positions}</td>
+                    <td className="tnum py-1.5 text-right text-muted">
+                      {f.weighted}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
 
       <Card>
         <SectionTitle

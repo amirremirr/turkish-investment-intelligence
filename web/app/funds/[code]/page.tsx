@@ -219,8 +219,12 @@ export default async function FundPage({
           </SectionTitle>
           {holdings.length === 0 ? (
             <p className="text-sm text-muted">
-              No stock-level holdings captured yet. Holdings are parsed from KAP
-              monthly portfolio reports and accumulate over time.
+              No stock-level holdings captured yet — KAP portfolio reports are
+              parsed monthly and coverage is forward-only, so most funds don&apos;t
+              have a book yet.{" "}
+              <Link href="/stocks" className="text-accent hover:underline">
+                See the funds that do →
+              </Link>
             </p>
           ) : (
             <>
