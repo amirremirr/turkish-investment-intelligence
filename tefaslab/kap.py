@@ -59,6 +59,16 @@ CREATE TABLE IF NOT EXISTS fund_holdings (
 );
 CREATE INDEX IF NOT EXISTS idx_holdings_isin ON fund_holdings(isin);
 CREATE INDEX IF NOT EXISTS idx_holdings_ticker ON fund_holdings(ticker);
+-- Where the forward scan has reached. Kept SEPARATE from MAX(disclosure
+-- id) on purpose: anchoring the scan to the last *found* report meant the
+-- cursor stopped advancing whenever a window held no fund report, and it
+-- rescanned the same ids nightly forever while KAP moved thousands of ids
+-- ahead. This cursor advances on every scan.
+CREATE TABLE IF NOT EXISTS kap_scan_state (
+    id          INTEGER PRIMARY KEY CHECK (id = 1),
+    cursor      INTEGER NOT NULL,
+    updated_at  TEXT
+);
 """
 
 
@@ -76,6 +86,9 @@ def scan_range(conn: sqlite3.Connection, start: int, count: int,
     s = session or requests.Session()
     found = empty = 0
     consecutive_empty = 0
+    # highest id seen to actually exist — this is KAP's live ceiling, and
+    # what the forward cursor should resume from next run
+    last_content = start - 1
     for did in range(start, start + count):
         if consecutive_empty >= 400:
             # long empty run = we've likely passed the current id
@@ -83,6 +96,7 @@ def scan_range(conn: sqlite3.Connection, start: int, count: int,
             break
         if conn.execute("SELECT 1 FROM kap_disclosures WHERE id=?",
                         (did,)).fetchone():
+            last_content = did          # known report: the id exists
             continue
         # the export endpoint intermittently returns empty bodies under
         # load — retry empties once with a longer pause
@@ -102,6 +116,7 @@ def scan_range(conn: sqlite3.Connection, start: int, count: int,
             time.sleep(PAUSE)
             continue
         consecutive_empty = 0
+        last_content = did
         text = r.content.decode("utf-8", errors="ignore")
         if "Portföy Dağılım Raporu" in text:
             title = re.search(r"<h1[^>]*>([^<]+)</h1>", text)
@@ -119,7 +134,55 @@ def scan_range(conn: sqlite3.Connection, start: int, count: int,
     # remember the frontier for forward scanning
     hi = conn.execute("SELECT MAX(id) FROM kap_disclosures").fetchone()[0]
     return {"scanned": count, "found": found, "empty": empty,
-            "max_id": hi}
+            "max_id": hi, "last_content": last_content}
+
+
+def _get_cursor(conn: sqlite3.Connection) -> int:
+    """Where the forward scan resumes. Seeds from the highest known
+    disclosure id the first time, then moves independently."""
+    row = conn.execute("SELECT cursor FROM kap_scan_state WHERE id=1").fetchone()
+    if row:
+        return int(row[0])
+    hi = conn.execute("SELECT MAX(id) FROM kap_disclosures").fetchone()[0]
+    return int(hi or 0)
+
+
+def _set_cursor(conn: sqlite3.Connection, value: int) -> None:
+    conn.execute(
+        "INSERT INTO kap_scan_state (id, cursor, updated_at) "
+        "VALUES (1, ?, datetime('now')) "
+        "ON CONFLICT(id) DO UPDATE SET cursor=excluded.cursor, "
+        "updated_at=excluded.updated_at", (int(value),))
+    conn.commit()
+
+
+def scan_forward(conn: sqlite3.Connection, budget: int = 4000,
+                 session: requests.Session | None = None) -> dict:
+    """Scan the next `budget` ids from the persisted cursor and advance
+    it — whether or not anything was found.
+
+    KAP mints ids for every filing market-wide (thousands a day), so fund
+    portfolio reports sit in sparse clusters. The old scan restarted at
+    MAX(found id) each night, so a window with no fund report left the
+    cursor parked and the same ids were refetched forever. Advancing the
+    cursor lets the scan walk to KAP's live ceiling, picking up each
+    month's reports as it passes them, then simply track the ceiling.
+    """
+    conn.executescript(SCHEMA)
+    start = _get_cursor(conn) + 1
+    if start <= 1:
+        print("  no kap frontier yet — run `holdings scan --start <id>` once")
+        return {}
+    out = scan_range(conn, start, budget, session)
+    # resume from the last id proven to exist; if the whole window was
+    # empty we've run past the ceiling, so hold position and retry later.
+    reached = max(out.get("last_content") or 0, start - 1)
+    _set_cursor(conn, reached)
+    out.update({"cursor_from": start, "cursor_to": reached,
+                "advanced": reached - (start - 1)})
+    print(f"  kap scan {start}..{start + budget - 1}: "
+          f"found {out.get('found', 0)}, cursor -> {reached}")
+    return out
 
 
 # --------------------------------------------------------------- parse
@@ -282,15 +345,18 @@ def parse_pdf_holdings(pdf_bytes: bytes) -> tuple[str | None, list[dict]]:
     return fund_code, list(agg.values())
 
 
-def daily_update(conn: sqlite3.Connection, max_ids: int = 2500) -> dict:
-    """Pipeline stage: scan forward from the id frontier, then parse.
-    Stops early after 400 consecutive empty ids (past the ceiling)."""
+def daily_update(conn: sqlite3.Connection, max_ids: int = 5000) -> dict:
+    """Pipeline stage: advance the forward scan, then parse what it found.
+
+    Budget is sized to outpace KAP's id issuance (a few thousand a day) so
+    the cursor closes the gap to the live ceiling and then tracks it —
+    which is what makes new monthly reports arrive on their own.
+    """
     conn.executescript(SCHEMA)
-    hi = conn.execute("SELECT MAX(id) FROM kap_disclosures").fetchone()[0]
-    if hi is None:
-        print("  no kap frontier yet — run `holdings scan` once first")
+    if _get_cursor(conn) <= 0:
+        print("  no kap frontier yet — run `holdings scan --start <id>` once")
         return {}
-    out = scan_range(conn, hi + 1, max_ids)
+    out = scan_forward(conn, budget=max_ids)
     out.update(parse_pending(conn, limit=300))
     return out
 

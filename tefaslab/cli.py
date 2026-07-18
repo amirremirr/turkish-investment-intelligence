@@ -216,7 +216,12 @@ def cmd_holdings(args) -> None:
     pd.set_option("display.width", 220)
     pd.set_option("display.max_colwidth", 45)
     if args.action == "scan":
-        out = kap.scan_range(conn, args.start, args.count)
+        # --start = manual/one-off range; otherwise resume the persisted
+        # forward cursor (the mode the nightly pipeline uses)
+        if args.start:
+            out = kap.scan_range(conn, args.start, args.count)
+        else:
+            out = kap.scan_forward(conn, budget=args.count)
         print(out)
     elif args.action == "parse":
         out = kap.parse_pending(conn, limit=args.count)
@@ -236,6 +241,11 @@ def cmd_holdings(args) -> None:
                          "GROUP BY status").fetchall()
         print(f"holdings rows: {n[0]:,} | funds: {n[1]} | periods: {n[2]}")
         print("disclosures:", dict(d))
+        cur = kap._get_cursor(conn)
+        hi = conn.execute(
+            "SELECT MAX(id) FROM kap_disclosures").fetchone()[0]
+        print(f"scan cursor: {cur} (highest known report id: {hi}) — the "
+              "cursor must keep advancing for new months to arrive")
     elif args.action == "crowding":
         t = ownership.crowding(conn)
         print(f"period {t.attrs['period']} · "

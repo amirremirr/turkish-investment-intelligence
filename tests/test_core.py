@@ -310,6 +310,40 @@ def test_kap_parser_on_fixture():
     assert top["ticker"] == "AVGO"          # Broadcom, 5.98% in fixture
 
 
+def test_kap_scan_cursor_advances(monkeypatch):
+    """Discovery stalled because the scan restarted at MAX(found id): a
+    window holding no fund report left the cursor parked and the same ids
+    were refetched nightly while KAP moved thousands ahead."""
+    import sqlite3
+    from tefaslab import kap
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(kap.SCHEMA)
+    conn.execute("INSERT INTO kap_disclosures (id, status) VALUES (1000, 'parsed')")
+    conn.commit()
+    assert kap._get_cursor(conn) == 1000        # seeds from known reports
+
+    def found_nothing(c, start, count, session=None):
+        return {"scanned": count, "found": 0, "empty": 0,
+                "max_id": 1000, "last_content": start + count - 1}
+
+    monkeypatch.setattr(kap, "scan_range", found_nothing)
+    out = kap.scan_forward(conn, budget=500)
+    assert out["found"] == 0
+    assert kap._get_cursor(conn) == 1500        # advanced despite no finds
+    out2 = kap.scan_forward(conn, budget=500)
+    assert out2["cursor_from"] == 1501          # resumes, never rescans
+
+    # but past KAP's live ceiling (window entirely empty) it holds position
+    def all_empty(c, start, count, session=None):
+        return {"scanned": count, "found": 0, "empty": count,
+                "max_id": 1000, "last_content": start - 1}
+
+    monkeypatch.setattr(kap, "scan_range", all_empty)
+    before = kap._get_cursor(conn)
+    kap.scan_forward(conn, budget=500)
+    assert kap._get_cursor(conn) == before
+
+
 def test_kap_number_format():
     # the parser must read both US and Turkish decimals, or "1,47" (a
     # 1.47% weight) becomes 147 — the bug that left 66/67 funds unweighted
