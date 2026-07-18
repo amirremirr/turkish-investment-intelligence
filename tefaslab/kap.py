@@ -69,6 +69,16 @@ CREATE TABLE IF NOT EXISTS kap_scan_state (
     cursor      INTEGER NOT NULL,
     updated_at  TEXT
 );
+-- Separate cursor walking DOWN from the earliest known disclosure, to
+-- recover periods from before coverage began. KAP ids are chronological,
+-- so each older monthly filing cluster sits some way below the current
+-- floor; this finds them the same way the forward scan finds new ones.
+-- (Own table rather than a second row: kap_scan_state is CHECK(id = 1).)
+CREATE TABLE IF NOT EXISTS kap_backfill_state (
+    id          INTEGER PRIMARY KEY CHECK (id = 1),
+    cursor      INTEGER NOT NULL,   -- lowest id scanned so far
+    updated_at  TEXT
+);
 """
 
 
@@ -182,6 +192,51 @@ def scan_forward(conn: sqlite3.Connection, budget: int = 4000,
                 "advanced": reached - (start - 1)})
     print(f"  kap scan {start}..{start + budget - 1}: "
           f"found {out.get('found', 0)}, cursor -> {reached}")
+    return out
+
+
+def _get_back_cursor(conn: sqlite3.Connection) -> int:
+    """Lowest id the backfill has scanned. Seeds from the earliest known
+    disclosure, then walks down."""
+    row = conn.execute(
+        "SELECT cursor FROM kap_backfill_state WHERE id=1").fetchone()
+    if row:
+        return int(row[0])
+    lo = conn.execute("SELECT MIN(id) FROM kap_disclosures").fetchone()[0]
+    return int(lo or 0)
+
+
+def _set_back_cursor(conn: sqlite3.Connection, value: int) -> None:
+    conn.execute(
+        "INSERT INTO kap_backfill_state (id, cursor, updated_at) "
+        "VALUES (1, ?, datetime('now')) "
+        "ON CONFLICT(id) DO UPDATE SET cursor=excluded.cursor, "
+        "updated_at=excluded.updated_at", (int(value),))
+    conn.commit()
+
+
+def scan_backward(conn: sqlite3.Connection, budget: int = 4000,
+                  session: requests.Session | None = None) -> dict:
+    """Walk DOWN from the earliest known disclosure to recover history.
+
+    Holdings have been forward-only: coverage started wherever the first
+    scan happened to begin, so everything filed before that is simply
+    absent. Older monthly clusters bunch tightly on filing days, so this
+    scans the block contiguously rather than trying to guess where they
+    sit — clusters are found by walking past them.
+    """
+    conn.executescript(SCHEMA)
+    hi = _get_back_cursor(conn)
+    if hi <= 1:
+        print("  no kap floor yet — run `holdings scan --start <id>` once")
+        return {}
+    start = max(hi - budget, 1)
+    out = scan_range(conn, start, hi - start, session)
+    _set_back_cursor(conn, start)
+    out.update({"backfill_from": hi, "backfill_to": start})
+    print(f"  kap backfill {start}..{hi - 1}: "
+          f"found {out.get('found', 0)}, floor -> {start}")
+    out.update(parse_pending(conn, limit=300, session=session))
     return out
 
 

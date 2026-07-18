@@ -226,6 +226,9 @@ def cmd_holdings(args) -> None:
     elif args.action == "parse":
         out = kap.parse_pending(conn, limit=args.count)
         print(out)
+    elif args.action == "backfill":
+        out = kap.scan_backward(conn, budget=args.count)
+        print(out)
     elif args.action == "reparse":
         out = kap.reparse(conn, limit=args.count)
         print(out)
@@ -244,8 +247,13 @@ def cmd_holdings(args) -> None:
         cur = kap._get_cursor(conn)
         hi = conn.execute(
             "SELECT MAX(id) FROM kap_disclosures").fetchone()[0]
+        back = kap._get_back_cursor(conn)
+        lo = conn.execute(
+            "SELECT MIN(id) FROM kap_disclosures").fetchone()[0]
         print(f"scan cursor: {cur} (highest known report id: {hi}) — the "
               "cursor must keep advancing for new months to arrive")
+        print(f"backfill floor: {back} (earliest known report id: {lo}) — "
+              "walks DOWN to recover older periods")
     elif args.action == "crowding":
         t = ownership.crowding(conn)
         print(f"period {t.attrs['period']} · "
@@ -536,9 +544,9 @@ def main() -> None:
     p.set_defaults(func=cmd_intraday_cloud)
 
     p = sub.add_parser("holdings", help="KAP fund holdings pipeline")
-    p.add_argument("action", choices=["scan", "parse", "reparse", "who",
-                                      "fund", "stats", "crowding", "active",
-                                      "attrib"])
+    p.add_argument("action", choices=["scan", "parse", "reparse",
+                                      "backfill", "who", "fund", "stats",
+                                      "crowding", "active", "attrib"])
     p.add_argument("arg", nargs="?", help="ticker (who) / fund code (fund)")
     p.add_argument("--start", type=int, help="scan start id")
     p.add_argument("--count", type=int, default=100)

@@ -344,6 +344,33 @@ def test_kap_scan_cursor_advances(monkeypatch):
     assert kap._get_cursor(conn) == before
 
 
+def test_kap_backfill_cursor_walks_down(monkeypatch):
+    """Backfill recovers pre-coverage periods, so its cursor must move
+    DOWN from the earliest known id and never rescan a block."""
+    import sqlite3
+    from tefaslab import kap
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(kap.SCHEMA)
+    conn.execute("INSERT INTO kap_disclosures (id, status) VALUES (9000, 'parsed')")
+    conn.commit()
+    assert kap._get_back_cursor(conn) == 9000     # seeds from earliest known
+
+    seen = []
+
+    def fake_scan(c, start, count, session=None):
+        seen.append((start, count))
+        return {"scanned": count, "found": 0, "empty": 0,
+                "max_id": 9000, "last_content": start + count - 1}
+
+    monkeypatch.setattr(kap, "scan_range", fake_scan)
+    monkeypatch.setattr(kap, "parse_pending", lambda *a, **k: {})
+    kap.scan_backward(conn, budget=1000)
+    assert seen[-1] == (8000, 1000)               # scans the block below
+    assert kap._get_back_cursor(conn) == 8000     # floor moved down
+    kap.scan_backward(conn, budget=1000)
+    assert seen[-1] == (7000, 1000)               # continues down, no rescan
+
+
 def test_kap_number_format():
     # the parser must read both US and Turkish decimals, or "1,47" (a
     # 1.47% weight) becomes 147 — the bug that left 66/67 funds unweighted
