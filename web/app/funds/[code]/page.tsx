@@ -62,6 +62,18 @@ export default async function FundPage({
     ...FACTORS.map((f) => Math.abs((fund[f.key] as number | null) ?? 0))
   );
 
+  // portfolio shape from the disclosed book (weights present for the
+  // funds whose KAP template parsed; concentration + how much of the
+  // book sits in consensus names vs unique picks)
+  const weighted = holdings.filter((h) => h.weight_pct != null);
+  const hasWeights = weighted.length > 0;
+  const top10 = weighted
+    .slice(0, 10)
+    .reduce((s, h) => s + (h.weight_pct ?? 0), 0);
+  const consensusWeight = weighted
+    .filter((h) => (h.n_funds ?? 0) >= 3)
+    .reduce((s, h) => s + (h.weight_pct ?? 0), 0);
+
   return (
     <div className="space-y-8">
       <div>
@@ -177,7 +189,7 @@ export default async function FundPage({
           <SectionTitle
             hint={holdings.length ? `${holdings.length} positions` : undefined}
           >
-            Top holdings
+            Portfolio
           </SectionTitle>
           {holdings.length === 0 ? (
             <p className="text-sm text-muted">
@@ -185,32 +197,67 @@ export default async function FundPage({
               monthly portfolio reports and accumulate over time.
             </p>
           ) : (
-            <table className="w-full text-sm">
-              <tbody>
-                {holdings.slice(0, 12).map((h, i) => (
-                  <tr key={i} className="border-b last:border-0">
-                    <td className="py-1.5 font-medium">
-                      {h.ticker ? (
-                        <Link
-                          href={`/stocks/${h.ticker}`}
-                          className="text-accent hover:underline"
-                        >
-                          {h.ticker}
-                        </Link>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td className="py-1.5 text-muted">
-                      {(h.name ?? "").slice(0, 28)}
-                    </td>
-                    <td className="tnum py-1.5 text-right">
-                      {h.weight_pct != null ? `${num(h.weight_pct, 1)}%` : "—"}
-                    </td>
+            <>
+              {hasWeights && (
+                <div className="mb-3 flex flex-wrap gap-x-6 gap-y-1 text-sm">
+                  <span className="text-muted">
+                    Top 10:{" "}
+                    <span className="tnum font-medium text-fg">
+                      {num(top10, 0)}%
+                    </span>
+                  </span>
+                  <span className="text-muted">
+                    In consensus names (≥3 funds):{" "}
+                    <span className="tnum font-medium text-fg">
+                      {num(consensusWeight, 0)}%
+                    </span>
+                  </span>
+                </div>
+              )}
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-xs text-muted">
+                    <th className="py-1 font-medium">Stock</th>
+                    <th className="py-1 font-medium">Name</th>
+                    <th className="py-1 text-right font-medium">Held by</th>
+                    <th className="py-1 text-right font-medium">Weight</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {holdings.slice(0, 12).map((h, i) => (
+                    <tr key={i} className="border-b last:border-0">
+                      <td className="py-1.5 font-medium">
+                        {h.ticker ? (
+                          <Link
+                            href={`/stocks/${h.ticker}`}
+                            className="text-accent hover:underline"
+                          >
+                            {h.ticker}
+                          </Link>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="py-1.5 text-muted">
+                        {(h.name ?? "").slice(0, 24)}
+                      </td>
+                      <td className="tnum py-1.5 text-right text-muted">
+                        {h.n_funds && h.n_funds > 1
+                          ? `${h.n_funds} funds`
+                          : h.n_funds === 1
+                            ? "only here"
+                            : "—"}
+                      </td>
+                      <td className="tnum py-1.5 text-right">
+                        {h.weight_pct != null
+                          ? `${num(h.weight_pct, 1)}%`
+                          : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
           )}
         </Card>
       </div>

@@ -126,20 +126,33 @@ export type Holding = {
   name: string | null;
   weight_pct: number | null;
   value: number | null;
+  n_funds: number | null; // how many funds hold this ticker (consensus)
 };
 
 export async function getFundHoldings(code: string): Promise<Holding[]> {
+  const c = code.toUpperCase();
   const rows = await sql`
-    SELECT ticker, name, weight_pct, value FROM fund_holdings
-    WHERE code = ${code.toUpperCase()}
-      AND period = (SELECT MAX(period) FROM fund_holdings
-                    WHERE code = ${code.toUpperCase()})
-    ORDER BY weight_pct DESC NULLS LAST`;
+    WITH latest AS (
+      SELECT code, MAX(period) AS mp FROM fund_holdings GROUP BY code
+    ),
+    book AS (
+      SELECT h.* FROM fund_holdings h
+      JOIN latest l ON l.code = h.code AND l.mp = h.period
+    ),
+    crowd AS (
+      SELECT ticker, COUNT(DISTINCT code) AS n_funds FROM book GROUP BY ticker
+    )
+    SELECT b.ticker, b.name, b.weight_pct, b.value, c.n_funds
+    FROM book b
+    LEFT JOIN crowd c ON c.ticker = b.ticker
+    WHERE b.code = ${c}
+    ORDER BY b.weight_pct DESC NULLS LAST`;
   return rows.map((r) => ({
     ticker: r.ticker,
     name: r.name,
     weight_pct: n(r.weight_pct),
     value: n(r.value),
+    n_funds: n(r.n_funds),
   }));
 }
 
