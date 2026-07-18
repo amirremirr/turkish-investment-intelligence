@@ -296,6 +296,31 @@ def reparse(conn: sqlite3.Connection, limit: int = 500,
     return parse_pending(conn, limit=limit, session=session)
 
 
+def _fetch_disclosure(s: requests.Session, did: int,
+                      retries: int = 3) -> tuple[str, bytes]:
+    """Resolve a disclosure's attachment objId and download its PDF,
+    retrying the transient KAP failures — empty / no-objId page, non-PDF
+    body — that spike when many ids are fetched in a burst (a rate limit
+    shows up as a whole contiguous block of 'no %PDF marker' errors)."""
+    last = "download failed"
+    for attempt in range(retries):
+        try:
+            page = s.get(PAGE.format(did), headers=H, timeout=60).text
+            objs = re.findall(r'objId\\":\\"([0-9a-f]{32})', page)
+            if not objs:
+                last = "no attachment objId on page"
+            else:
+                raw = s.get(FILE.format(objs[0]), headers=H,
+                            timeout=120).content
+                if raw.find(b"%PDF") >= 0:
+                    return objs[0], _extract_pdf(raw)
+                last = "no %PDF marker in download"
+        except requests.RequestException as e:
+            last = f"{type(e).__name__}: {e}"
+        time.sleep(3 * (attempt + 1))
+    raise ValueError(last)
+
+
 def parse_pending(conn: sqlite3.Connection, limit: int = 50,
                   session: requests.Session | None = None) -> dict:
     """Resolve + parse disclosures in status 'found'."""
@@ -310,18 +335,20 @@ def parse_pending(conn: sqlite3.Connection, limit: int = 50,
     ok = err = 0
     for did, fund_title, year, per in rows:
         try:
-            page = s.get(PAGE.format(did), headers=H, timeout=60).text
-            objs = re.findall(r'objId\\":\\"([0-9a-f]{32})', page)
-            if not objs:
-                raise ValueError("no attachment objId on page")
-            raw = s.get(FILE.format(objs[0]), headers=H, timeout=120).content
-            code, holdings = parse_pdf_holdings(_extract_pdf(raw))
+            obj_id, pdf = _fetch_disclosure(s, did)
+            code, holdings = parse_pdf_holdings(pdf)
             if code not in known_codes:
                 code = titles.get(fund_title)
             if not code:
                 raise ValueError(f"fund code unresolved ({fund_title!r})")
             if not holdings:
                 raise ValueError("no ISIN rows parsed")
+            if len(holdings) > 600:
+                # a recognized template never yields this many rows; the
+                # parser tripped on an unfamiliar layout (e.g. GZR's
+                # narrow form) — don't write garbage, fail loudly instead.
+                raise ValueError(f"implausible holding count "
+                                 f"{len(holdings)} — template not recognized")
             period = (f"{year}-{per:02d}" if year and per
                       else f"{date.today():%Y-%m}")
             conn.executemany(
@@ -333,7 +360,7 @@ def parse_pending(conn: sqlite3.Connection, limit: int = 50,
                  for h in holdings])
             conn.execute("UPDATE kap_disclosures SET status='parsed', "
                          "code=?, obj_id=? WHERE id=?",
-                         (code, objs[0], did))
+                         (code, obj_id, did))
             ok += 1
             print(f"  {did} {code}: {len(holdings)} holdings ({period})")
         except Exception as e:
