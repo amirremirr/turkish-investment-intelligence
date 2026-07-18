@@ -105,6 +105,19 @@ presentation tables by a scheduled nightly pipeline.
   benchmark staleness, classification); non-zero exit for schedulers.
 - CI ([ci.yml](../.github/workflows/ci.yml)): unit tests + import smoke
   on every push, on Linux.
+- **Source-contract canary**
+  ([source_check.yml](../.github/workflows/source_check.yml) →
+  [scripts/source_check.py](../scripts/source_check.py)), twice daily
+  (01:00 + 13:00 UTC, the latter ~2.5h before the nightly): probes
+  TEFAS/KAP/Yahoo/EVDS with one minimal real request each and drives
+  the *same* client fetch paths — so the same contract assertions the
+  pipeline relies on fire here first. Reusing the real clients keeps the
+  contract defined once; the canary can't drift from what the pipeline
+  depends on. Per source: OK / CHANGED (schema moved) / DOWN
+  (unreachable after retries) / SKIP (no key); any CHANGED or DOWN opens
+  a GitHub issue and fails the run. This catches an upstream schema
+  change proactively; the daily health monitor catches downstream
+  staleness after the fact — two layers, different failure modes.
 - **Durable snapshots & reproducibility**
   ([snapshot.yml](../.github/workflows/snapshot.yml) →
   [scripts/snapshot.py](../scripts/snapshot.py)): the Actions cache is

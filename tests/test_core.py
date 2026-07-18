@@ -308,3 +308,41 @@ def test_kap_parser_on_fixture():
     assert all(r["value"] is not None for r in rows)
     top = max(rows, key=lambda r: r["weight_pct"] or 0)
     assert top["ticker"] == "AVGO"          # Broadcom, 5.98% in fixture
+
+
+# ------------------------------------------- source-contract canary
+
+sys.path.insert(0, str(ROOT / "scripts"))
+import source_check as sc  # noqa: E402
+
+
+def test_source_classify_contract_vs_outage():
+    from tefaslab import client
+    changed, _ = sc._classify_tefas(client.TefasError(
+        "dagilimSiraliGetirT: rows are missing expected fields ['tarih'] "
+        "— TEFAS schema likely changed."))
+    down, _ = sc._classify_tefas(client.TefasError(
+        "fonGnlBlgSiraliGetir failed after 6 attempts: timeout"))
+    assert changed == sc.CHANGED   # a shape change needs eyes
+    assert down == sc.DOWN         # a plain outage is labelled differently
+
+
+def test_source_check_exit_codes(monkeypatch):
+    monkeypatch.setattr(sc.time, "sleep", lambda *_: None)  # skip retry wait
+
+    monkeypatch.setattr(sc, "CHECKS", [("a", lambda: (sc.OK, "ok")),
+                                       ("b", lambda: (sc.SKIP, "no key"))])
+    assert sc.main() == 0          # OK + SKIP => healthy, no page
+
+    monkeypatch.setattr(sc, "CHECKS", [("a", lambda: (sc.OK, "ok")),
+                                       ("b", lambda: (sc.CHANGED, "schema"))])
+    assert sc.main() == 1          # a schema change must page
+
+    monkeypatch.setattr(sc, "CHECKS", [("a", lambda: (sc.DOWN, "timeout"))])
+    assert sc.main() == 1          # a sustained outage pages too
+
+
+def test_source_check_unexpected_error_is_down():
+    def boom():
+        raise RuntimeError("kaboom")
+    assert sc._run(boom) == (sc.DOWN, "unexpected RuntimeError: kaboom")

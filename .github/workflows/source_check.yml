@@ -1,0 +1,57 @@
+name: Source contract check
+
+# Proactive upstream canary: probes TEFAS / KAP / Yahoo / EVDS with one
+# minimal real request each and drives the same contract assertions the
+# nightly pipeline uses. Catches a silent schema/template change (or a
+# source starting to block us) here, on a schedule — not when the
+# pipeline trips over it. On failure it opens/refreshes a GitHub issue
+# (notifies you) and fails the run (built-in failure email).
+
+on:
+  schedule:
+    - cron: "0 1,13 * * *" # 01:00 UTC + 13:00 UTC (~2.5h before the nightly)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: source-check
+
+jobs:
+  sources:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EVDS_API_KEY: ${{ secrets.EVDS_API_KEY }}
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Probe upstream sources
+        run: |
+          set -o pipefail
+          python scripts/source_check.py | tee source_check.txt
+
+      - name: Open or update issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TITLE="🔴 Upstream source contract check failed"
+          RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          REPORT="$(cat source_check.txt 2>/dev/null || echo 'no report produced — the check errored before output')"
+          BODY="$(printf 'A scheduled source-contract check failed — an upstream source may have changed shape or gone down.\n\n```\n%s\n```\n\nRun: %s\n' "$REPORT" "$RUN_URL")"
+          NUM=$(gh issue list --state open --search "$TITLE in:title" \
+                  --json number --jq '.[0].number // empty' 2>/dev/null || true)
+          if [ -n "$NUM" ]; then
+            gh issue comment "$NUM" --body "$BODY"
+          else
+            gh issue create --title "$TITLE ($(date -u +%F))" --body "$BODY"
+          fi

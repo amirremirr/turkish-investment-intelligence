@@ -24,12 +24,13 @@ same day:
 - **Single scheduler** — the local Windows daily task was deleted;
   GitHub Actions is the sole pipeline owner (divergent-DB risk closed).
 
-Accepted but structural (tracked below / roadmap): thin operational
-CI, four-factor model simplicity, multiple-testing corrections,
-fund-level panel designs, fee data, heuristic score weights,
-regime-table power. (The cache-backed authoritative DB — review
-priority #1 — is now durably backed by weekly hash-frozen snapshot
-releases; see Weakness 1.) Position statement: this
+Accepted but structural (tracked below / roadmap): four-factor model
+simplicity, multiple-testing corrections, fund-level panel designs,
+fee data, heuristic score weights, regime-table power. (Review
+priority #1 — the cache-backed authoritative DB — is now durably
+backed by weekly hash-frozen snapshot releases, see Weakness 1;
+priority #2 — thin operational CI — is addressed by the twice-daily
+source-contract canary, see Weakness 2.) Position statement: this
 is a **personal research workstation with transparent methods** — not
 institution-grade intelligence, and it should not be marketed as such.
 
@@ -62,9 +63,13 @@ institution-grade intelligence, and it should not be marketed as such.
    the pre-upload integrity + row-count floors, not eliminated). Note
    the price of SQLite lock-in still compounds monthly — acceptable now,
    but it must stay a *priced* decision, not a forgotten one.
-2. **Testing depth**: unit tests now cover the critical logic (lag
-   convention, flow guard, classifier, OLS, KAP parser), but coverage
-   is thin elsewhere; no integration tests against live APIs.
+2. **Testing depth**: unit tests cover the critical logic (lag
+   convention, flow guard, classifier, OLS, KAP parser, snapshot/publish
+   guards, canary exit codes). A scheduled **source-contract canary**
+   (`source_check.yml` → `scripts/source_check.py`, 2×/day) now drives
+   the real TEFAS/KAP/Yahoo/EVDS fetch paths and pages on a schema change
+   — the remaining gap is depth (no full end-to-end pipeline run in CI,
+   no assertion on parsed *values*, only response shape).
 3. **Sample**: Jan 2024 → present, almost entirely restrictive-rate
    months. Regime comparisons lack power until an easing cycle enters
    the sample.
