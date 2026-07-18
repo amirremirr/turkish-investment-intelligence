@@ -310,6 +310,18 @@ def test_kap_parser_on_fixture():
     assert top["ticker"] == "AVGO"          # Broadcom, 5.98% in fixture
 
 
+def test_kap_number_format():
+    # the parser must read both US and Turkish decimals, or "1,47" (a
+    # 1.47% weight) becomes 147 — the bug that left 66/67 funds unweighted
+    from tefaslab import kap
+    assert kap._detect_decimal("değer 16.000.000,00 ağırlık 1,47") == ","
+    assert kap._detect_decimal("value 16,000,000.00 weight 5.98") == "."
+    assert kap._num("1.234.567,89", ",") == 1234567.89
+    assert kap._num("1,47", ",") == 1.47
+    assert kap._num("5.98", ".") == 5.98
+    assert kap._num("1,234,567.89", ".") == 1234567.89
+
+
 # ------------------------------------------- source-contract canary
 
 sys.path.insert(0, str(ROOT / "scripts"))

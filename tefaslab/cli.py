@@ -221,6 +221,9 @@ def cmd_holdings(args) -> None:
     elif args.action == "parse":
         out = kap.parse_pending(conn, limit=args.count)
         print(out)
+    elif args.action == "reparse":
+        out = kap.reparse(conn, limit=args.count)
+        print(out)
     elif args.action == "who":
         print(kap.who_owns(conn, args.arg).round(2).to_string(index=False))
     elif args.action == "fund":
@@ -523,8 +526,8 @@ def main() -> None:
     p.set_defaults(func=cmd_intraday_cloud)
 
     p = sub.add_parser("holdings", help="KAP fund holdings pipeline")
-    p.add_argument("action", choices=["scan", "parse", "who", "fund",
-                                      "stats", "crowding", "active",
+    p.add_argument("action", choices=["scan", "parse", "reparse", "who",
+                                      "fund", "stats", "crowding", "active",
                                       "attrib"])
     p.add_argument("arg", nargs="?", help="ticker (who) / fund code (fund)")
     p.add_argument("--start", type=int, help="scan start id")

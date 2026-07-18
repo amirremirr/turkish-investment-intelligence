@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "daily = incremental run · bootstrap = full rebuild (~2h)"
+        description: "daily = incremental · bootstrap = full rebuild (~2h) · reparse = re-run KAP parser on stored disclosures"
         type: choice
-        options: [daily, bootstrap]
+        options: [daily, bootstrap, reparse]
         default: daily
 
 concurrency:
@@ -66,8 +66,21 @@ jobs:
           python -m tefaslab holdings parse --count 50
           python -m tefaslab daily --skip-raw
 
+      - name: Reparse KAP holdings (after a parser fix)
+        if: github.event.inputs.mode == 'reparse'
+        run: |
+          test -f data/funds.db || {
+            echo "::error::No database in cache — run mode=bootstrap first"; \
+            exit 1; }
+          python -m tefaslab holdings reparse --count 500
+          python -m tefaslab holdings stats
+          python -m tefaslab daily --skip-raw
+          python -m tefaslab publish
+
       - name: Daily run
-        if: github.event.inputs.mode != 'bootstrap'
+        if: >-
+          github.event.inputs.mode != 'bootstrap' &&
+          github.event.inputs.mode != 'reparse'
         run: |
           test -f data/funds.db || {
             echo "::error::No database in cache — run this workflow "\
@@ -75,7 +88,9 @@ jobs:
           python scripts/run_daily.py --no-retry
 
       - name: Monthly intelligence report (1st weekday of month)
-        if: github.event.inputs.mode != 'bootstrap'
+        if: >-
+          github.event.inputs.mode != 'bootstrap' &&
+          github.event.inputs.mode != 'reparse'
         run: |
           if [ "$(date +%d)" -le 03 ]; then
             python -m tefaslab report

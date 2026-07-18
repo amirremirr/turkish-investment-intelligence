@@ -131,29 +131,73 @@ def _extract_pdf(raw: bytes) -> bytes:
     return raw[i:]
 
 
-def _num(s: str) -> float | None:
-    s = s.replace(",", "")
+def _num(s: str, dec: str = ".") -> float | None:
+    """Parse a number in the document's detected format. Turkish PDFs use
+    '.' for thousands and ',' for decimal (1.234.567,89); others are the
+    reverse. Getting this wrong turns '1,47' into 147."""
+    if not re.search(r"\d", s):
+        return None
+    if dec == ",":
+        s = s.replace(".", "").replace(",", ".")
+    else:
+        s = s.replace(",", "")
     try:
         return float(s)
     except ValueError:
         return None
 
 
+def _detect_decimal(text: str) -> str:
+    """Infer the decimal separator for the whole document. Prefer the
+    unambiguous grouped forms (1.234.567,89 vs 1,234,567.89); else fall
+    back to whichever 2-decimal form is more common."""
+    tr = len(re.findall(r"\d{1,3}(?:\.\d{3})+,\d+", text))
+    us = len(re.findall(r"\d{1,3}(?:,\d{3})+\.\d+", text))
+    if tr or us:
+        return "," if tr >= us else "."
+    tr2 = len(re.findall(r"\d+,\d{2}\b", text))
+    us2 = len(re.findall(r"\d+\.\d{2}\b", text))
+    return "," if tr2 > us2 else "."
+
+
+def _header_x(words, sub: str) -> float | None:
+    return next((w["x0"] for w in words if sub in w["text"].upper()), None)
+
+
 def parse_pdf_holdings(pdf_bytes: bytes) -> tuple[str | None, list[dict]]:
     """Reconstruct the FON PORTFÖY DEĞERİ TABLOSU from word positions.
 
-    Rows are ISIN-anchored. Wrapped security names can push the numeric
-    columns onto a neighbouring visual line, so lines carrying only the
-    price/value/weight cluster (x>900) are matched to the nearest
-    unmatched ISIN line by vertical distance.
+    Rows are ISIN-anchored. The numeric columns live at issuer-specific
+    x-positions and in either number format, so instead of hardcoding
+    coordinates we (a) detect the document's decimal separator and (b)
+    locate the right-hand value/weight cluster from the '(FPD GÖRE)' /
+    '(FTD GÖRE)' column headers — the standard SPK labels for a holding's
+    share of the fund. Weight is the rightmost percentage column (Toplam
+    Değere göre); the largest number in the cluster is the total value.
+    Wrapped names push the numbers onto a neighbouring visual line, which
+    is re-attached to the nearest unmatched ISIN line by vertical
+    distance.
     """
     holdings: list[dict] = []
     fund_code = None
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        all_text = " ".join(w["text"] for p in pdf.pages
+                            for w in p.extract_words())
+        dec = _detect_decimal(all_text)
+        width = pdf.pages[0].width
         first_text = pdf.pages[0].extract_text() or ""
         m = re.search(r"\b([A-Z0-9]{2,5})\s*-\s*[A-ZÇĞİÖŞÜ]", first_text)
         if m:
             fund_code = m.group(1)
+        # Locate the value/weight cluster from the SPK column headers. The
+        # threshold sits just left of the total-value column so the money
+        # value and the trailing % columns are captured, nothing to their
+        # left. Falls back to a width fraction if the headers are absent.
+        hw = pdf.pages[0].extract_words()
+        fpd = _header_x(hw, "(FPD")
+        ftd = _header_x(hw, "(FTD")
+        gap = (ftd - fpd) if (ftd and fpd and ftd > fpd) else width * 0.03
+        vthresh = (fpd - 3.5 * gap) if fpd else width * 0.55
         for page in pdf.pages:
             words = page.extract_words()
             lines: dict[int, list] = {}
@@ -163,9 +207,10 @@ def parse_pdf_holdings(pdf_bytes: bytes) -> tuple[str | None, list[dict]]:
             isin_rows, value_rows = [], []
             for key in sorted(lines):
                 ws = sorted(lines[key], key=lambda w: w["x0"])
-                texts = [w["text"] for w in ws]
-                has_isin = any(ISIN_RE.match(t) for t in texts)
-                has_values = any(w["x0"] > 900 for w in ws)
+                has_isin = any(ISIN_RE.match(t["text"]) for t in ws)
+                has_values = any(w["x0"] > vthresh
+                                 and _num(w["text"], dec) is not None
+                                 for w in ws)
                 if has_isin:
                     isin_rows.append({"top": key * 3, "words": ws,
                                       "matched": has_values})
@@ -192,23 +237,25 @@ def parse_pdf_holdings(pdf_bytes: bytes) -> tuple[str | None, list[dict]]:
                              if ISIN_RE.match(w["text"])), None)
                 if not isin:
                     continue
-                ticker = ws[0]["text"] if ws[0]["x0"] < 60 else None
-                name = " ".join(w["text"] for w in ws
-                                if 180 < w["x0"] < 360
-                                and not ISIN_RE.match(w["text"]))
+                ticker = (ws[0]["text"] if ws[0]["x0"] < 60
+                          and not ISIN_RE.match(ws[0]["text"]) else None)
                 isin_x = next(w["x0"] for w in ws if w["text"] == isin)
-                nums_mid = [_num(w["text"]) for w in ws
-                            if isin_x < w["x0"] < 660
-                            and _num(w["text"]) is not None]
-                nums_val = [(w["x0"], _num(w["text"])) for w in ws
-                            if w["x0"] > 900
-                            and _num(w["text"]) is not None]
+                name = " ".join(
+                    w["text"] for w in ws
+                    if 60 < w["x0"] < isin_x and w["text"] != "TL"
+                    and not ISIN_RE.match(w["text"])
+                    and _num(w["text"], dec) is None
+                    and not re.match(r"\d", w["text"]))
+                nums_mid = [_num(w["text"], dec) for w in ws
+                            if isin_x < w["x0"] < vthresh
+                            and _num(w["text"], dec) is not None]
+                nums_val = [(w["x0"], _num(w["text"], dec)) for w in ws
+                            if w["x0"] > vthresh
+                            and _num(w["text"], dec) is not None]
                 quantity = nums_mid[0] if nums_mid else None
                 value = weight = None
                 if nums_val:
                     nums_val.sort()
-                    # columns: unit price, total value, then 3 weights;
-                    # take the largest as value, the last as weight
                     value = max(v for _, v in nums_val)
                     weight = nums_val[-1][1]
                     if weight is not None and weight > 100:
@@ -231,6 +278,22 @@ def daily_update(conn: sqlite3.Connection, max_ids: int = 2500) -> dict:
     out = scan_range(conn, hi + 1, max_ids)
     out.update(parse_pending(conn, limit=300))
     return out
+
+
+def reparse(conn: sqlite3.Connection, limit: int = 500,
+            session: requests.Session | None = None) -> dict:
+    """Re-download and re-parse every already-processed disclosure with
+    the CURRENT parser — e.g. after a parser fix that recovers columns
+    the old one dropped. Resets 'parsed'/'error' rows to 'found' so
+    parse_pending picks them up; INSERT OR REPLACE overwrites the stale
+    fund_holdings rows, so it is idempotent and safe to re-run."""
+    conn.executescript(SCHEMA)
+    n = conn.execute(
+        "UPDATE kap_disclosures SET status='found' "
+        "WHERE status IN ('parsed', 'error')").rowcount
+    conn.commit()
+    print(f"  reset {n} disclosures to 'found' for reparse")
+    return parse_pending(conn, limit=limit, session=session)
 
 
 def parse_pending(conn: sqlite3.Connection, limit: int = 50,
