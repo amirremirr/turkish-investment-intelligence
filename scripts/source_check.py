@@ -133,7 +133,19 @@ def check_evds() -> tuple[str, str]:
         return CHANGED, (f"{code}: JSON parsed but no points — series or "
                          "column name changed")
     d, v = rows[-1]
-    return OK, f"{code} {len(rows)} points, last {d}={v}"
+    # A retired EVDS series keeps returning 200s with valid JSON, just
+    # frozen — TP.FG.J0 did exactly that after TÜİK rebased CPI, and the
+    # site showed a six-month-old inflation figure as current. Shape
+    # alone can't catch that; staleness can.
+    try:
+        age = (date.today() - date.fromisoformat(d)).days
+    except ValueError:
+        age = 0
+    if age > 75:
+        return CHANGED, (f"{code}: last point {d} is {age}d old — a monthly "
+                         "series this stale is usually RETIRED (rebased/"
+                         "replaced) even though it still returns 200s")
+    return OK, f"{code} {len(rows)} points, last {d}={v} ({age}d old)"
 
 
 CHECKS = [

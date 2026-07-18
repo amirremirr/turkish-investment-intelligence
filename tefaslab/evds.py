@@ -6,7 +6,14 @@ evds2.tcmb.gov.tr/service/evds/ to evds3.tcmb.gov.tr/igmevdsms-dis/
 EVDS_API_KEY env var or a gitignored .env file — never in code.
 
 Series are stored in the shared `benchmarks` table:
-    cpi_index    monthly CPI level (TP.FG.J0, 2003=100; ~1 month lag)
+    cpi_index    monthly CPI level (2003=100; ~1 month lag). TÜİK rebased
+                 CPI to 2025=100 and RETIRED the old TP.FG.J0, which went
+                 stale after 2026-01 while still returning 200s — so the
+                 site showed a six-month-old inflation figure as current.
+                 TP.GENENDEKS.T1 continues the same 2003=100 base (its
+                 2026-01 value matches TP.FG.J0's exactly), so history
+                 splices cleanly and year-on-year stays valid; the
+                 2025=100 series (TP.TUKFIY2025.GENEL) would not.
     policy_rate  CBRT average funding cost, % (TP.APIFON4, daily)
     deposit_3m   3-month TL deposit rate, % (TP.TRY.MT02, weekly)
     deposit_1y   1-year TL deposit rate, % (TP.TRY.MT04, weekly)
@@ -25,7 +32,7 @@ from . import db
 BASE = "https://evds3.tcmb.gov.tr/igmevdsms-dis"
 
 SERIES = {
-    "cpi_index": "TP.FG.J0",
+    "cpi_index": "TP.GENENDEKS.T1",
     "policy_rate": "TP.APIFON4",
     "deposit_3m": "TP.TRY.MT02",
     "deposit_1y": "TP.TRY.MT04",

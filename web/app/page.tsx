@@ -9,6 +9,7 @@ export const revalidate = 300;
 type Snap = Record<string, { level: number; chg_1d: number; date?: string }>;
 type Macro = {
   inflation_yoy?: number;
+  inflation_asof?: string;
   policy_rate?: number;
   real_rate?: number;
   rates?: string;
@@ -123,6 +124,14 @@ export default async function Home() {
                 <Stat
                   label="Inflation (yoy)"
                   value={`${num(macro.inflation_yoy, 1)}%`}
+                  /* CPI publishes monthly in arrears, and a retired EVDS
+                     series can freeze while still returning 200s — label
+                     the vintage so a stale figure can't read as current. */
+                  sub={
+                    macro.inflation_asof
+                      ? `CPI as of ${macro.inflation_asof.slice(0, 7)}`
+                      : undefined
+                  }
                 />
               </Card>
               <Card>
