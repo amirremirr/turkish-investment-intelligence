@@ -73,6 +73,23 @@ def main() -> int:
     conn.execute("VACUUM INTO ?", (OUT.as_posix(),))
     conn.close()
 
+    # Verify the COPY we are about to ship — not just the source. A
+    # partial VACUUM (disk full on the runner) leaves a truncated file
+    # while the source still passes every check above.
+    out = sqlite3.connect(OUT)
+    try:
+        out_check = out.execute("PRAGMA quick_check").fetchone()[0]
+        out_funds = out.execute("SELECT COUNT(*) FROM funds").fetchone()[0]
+    finally:
+        out.close()
+    if out_check != "ok":
+        print(f"FAIL: snapshot copy failed integrity: {out_check}")
+        return 1
+    if out_funds != counts.get("funds"):
+        print(f"FAIL: snapshot copy is incomplete — funds {out_funds} "
+              f"!= source {counts.get('funds')}")
+        return 1
+
     manifest = {
         "created_utc": datetime.now(timezone.utc)
         .strftime("%Y-%m-%dT%H:%M:%SZ"),
