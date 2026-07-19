@@ -91,19 +91,44 @@ def _connect(db_path=db.DB_PATH) -> sqlite3.Connection:
 # ---------------------------------------------------------------- scan
 
 def scan_range(conn: sqlite3.Connection, start: int, count: int,
-               session: requests.Session | None = None) -> dict:
-    """Fingerprint ids [start, start+count) via excel export."""
+               session: requests.Session | None = None,
+               max_seconds: float | None = None,
+               descending: bool = False) -> dict:
+    """Fingerprint ids [start, start+count) via excel export.
+
+    max_seconds bounds the wall clock: per-id cost is not ours to control
+    (KAP throttles, and a throttled fetch costs two 30s timeouts), so a
+    plain id count is an unbounded amount of work — one run ground on for
+    9h and starved the nightly pipeline behind the concurrency lock.
+    Callers persist a cursor, so stopping early just means resuming later.
+
+    descending walks the block high->low, which keeps the scanned region
+    contiguous when a backfill stops early.
+    """
     s = session or requests.Session()
     found = empty = 0
     consecutive_empty = 0
+    t0 = time.time()
+    scanned = 0
+    last_scanned = start + count - 1 if descending else start
     # highest id seen to actually exist — this is KAP's live ceiling, and
     # what the forward cursor should resume from next run
     last_content = start - 1
-    for did in range(start, start + count):
+    ids = range(start, start + count)
+    for did in (reversed(ids) if descending else ids):
+        if max_seconds and time.time() - t0 > max_seconds:
+            print(f"  time budget hit after {scanned} ids "
+                  f"({time.time() - t0:.0f}s) — stopping, cursor persists")
+            break
         if consecutive_empty >= 400:
             # long empty run = we've likely passed the current id
             # ceiling; stop instead of burning requests
             break
+        last_scanned = did
+        scanned += 1
+        if scanned % 250 == 0:
+            print(f"    ...{scanned}/{count} ids, {found} found, "
+                  f"{time.time() - t0:.0f}s elapsed")
         if conn.execute("SELECT 1 FROM kap_disclosures WHERE id=?",
                         (did,)).fetchone():
             last_content = did          # known report: the id exists
@@ -143,8 +168,10 @@ def scan_range(conn: sqlite3.Connection, start: int, count: int,
     conn.commit()
     # remember the frontier for forward scanning
     hi = conn.execute("SELECT MAX(id) FROM kap_disclosures").fetchone()[0]
-    return {"scanned": count, "found": found, "empty": empty,
-            "max_id": hi, "last_content": last_content}
+    return {"scanned": scanned, "found": found, "empty": empty,
+            "max_id": hi, "last_content": last_content,
+            "last_scanned": last_scanned,
+            "seconds": round(time.time() - t0)}
 
 
 def _get_cursor(conn: sqlite3.Connection) -> int:
@@ -167,7 +194,8 @@ def _set_cursor(conn: sqlite3.Connection, value: int) -> None:
 
 
 def scan_forward(conn: sqlite3.Connection, budget: int = 4000,
-                 session: requests.Session | None = None) -> dict:
+                 session: requests.Session | None = None,
+                 max_seconds: float = 1500) -> dict:
     """Scan the next `budget` ids from the persisted cursor and advance
     it — whether or not anything was found.
 
@@ -183,7 +211,8 @@ def scan_forward(conn: sqlite3.Connection, budget: int = 4000,
     if start <= 1:
         print("  no kap frontier yet — run `holdings scan --start <id>` once")
         return {}
-    out = scan_range(conn, start, budget, session)
+    out = scan_range(conn, start, budget, session,
+                     max_seconds=max_seconds)
     # resume from the last id proven to exist; if the whole window was
     # empty we've run past the ceiling, so hold position and retry later.
     reached = max(out.get("last_content") or 0, start - 1)
@@ -216,7 +245,8 @@ def _set_back_cursor(conn: sqlite3.Connection, value: int) -> None:
 
 
 def scan_backward(conn: sqlite3.Connection, budget: int = 4000,
-                  session: requests.Session | None = None) -> dict:
+                  session: requests.Session | None = None,
+                  max_seconds: float = 1500) -> dict:
     """Walk DOWN from the earliest known disclosure to recover history.
 
     Holdings have been forward-only: coverage started wherever the first
@@ -231,11 +261,16 @@ def scan_backward(conn: sqlite3.Connection, budget: int = 4000,
         print("  no kap floor yet — run `holdings scan --start <id>` once")
         return {}
     start = max(hi - budget, 1)
-    out = scan_range(conn, start, hi - start, session)
-    _set_back_cursor(conn, start)
-    out.update({"backfill_from": hi, "backfill_to": start})
-    print(f"  kap backfill {start}..{hi - 1}: "
-          f"found {out.get('found', 0)}, floor -> {start}")
+    # Walk high->low so that stopping early still leaves everything above
+    # the new floor scanned; the floor is where we actually reached, not
+    # where we hoped to.
+    out = scan_range(conn, start, hi - start, session,
+                     max_seconds=max_seconds, descending=True)
+    floor = int(out.get("last_scanned", start))
+    _set_back_cursor(conn, floor)
+    out.update({"backfill_from": hi, "backfill_to": floor})
+    print(f"  kap backfill {hi - 1}..{floor}: found {out.get('found', 0)} "
+          f"in {out.get('seconds', 0)}s, floor -> {floor}")
     out.update(parse_pending(conn, limit=300, session=session))
     return out
 

@@ -322,9 +322,10 @@ def test_kap_scan_cursor_advances(monkeypatch):
     conn.commit()
     assert kap._get_cursor(conn) == 1000        # seeds from known reports
 
-    def found_nothing(c, start, count, session=None):
-        return {"scanned": count, "found": 0, "empty": 0,
-                "max_id": 1000, "last_content": start + count - 1}
+    def found_nothing(c, start, count, session=None, **kw):
+        return {"scanned": count, "found": 0, "empty": 0, "max_id": 1000,
+                "last_content": start + count - 1,
+                "last_scanned": start + count - 1}
 
     monkeypatch.setattr(kap, "scan_range", found_nothing)
     out = kap.scan_forward(conn, budget=500)
@@ -334,9 +335,9 @@ def test_kap_scan_cursor_advances(monkeypatch):
     assert out2["cursor_from"] == 1501          # resumes, never rescans
 
     # but past KAP's live ceiling (window entirely empty) it holds position
-    def all_empty(c, start, count, session=None):
-        return {"scanned": count, "found": 0, "empty": count,
-                "max_id": 1000, "last_content": start - 1}
+    def all_empty(c, start, count, session=None, **kw):
+        return {"scanned": count, "found": 0, "empty": count, "max_id": 1000,
+                "last_content": start - 1, "last_scanned": start - 1}
 
     monkeypatch.setattr(kap, "scan_range", all_empty)
     before = kap._get_cursor(conn)
@@ -357,18 +358,19 @@ def test_kap_backfill_cursor_walks_down(monkeypatch):
 
     seen = []
 
-    def fake_scan(c, start, count, session=None):
-        seen.append((start, count))
-        return {"scanned": count, "found": 0, "empty": 0,
-                "max_id": 9000, "last_content": start + count - 1}
+    def fake_scan(c, start, count, session=None, **kw):
+        # backfill walks high->low, so a completed block ends at `start`
+        seen.append((start, count, kw.get("descending")))
+        return {"scanned": count, "found": 0, "empty": 0, "max_id": 9000,
+                "last_content": start + count - 1, "last_scanned": start}
 
     monkeypatch.setattr(kap, "scan_range", fake_scan)
     monkeypatch.setattr(kap, "parse_pending", lambda *a, **k: {})
     kap.scan_backward(conn, budget=1000)
-    assert seen[-1] == (8000, 1000)               # scans the block below
+    assert seen[-1] == (8000, 1000, True)         # scans the block below, descending
     assert kap._get_back_cursor(conn) == 8000     # floor moved down
     kap.scan_backward(conn, budget=1000)
-    assert seen[-1] == (7000, 1000)               # continues down, no rescan
+    assert seen[-1] == (7000, 1000, True)         # continues down, no rescan
 
 
 def test_kap_number_format():
