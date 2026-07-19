@@ -39,6 +39,12 @@ class TefasError(RuntimeError):
     pass
 
 
+# TEFAS signals "this range has no rows" by throwing a Java error rather
+# than returning an empty list. Matched narrowly on purpose: anything
+# else must still surface as a real failure.
+_EMPTY_RESULT_ERRORS = ("Index 0 out of bounds for length 0",)
+
+
 def _fmt(d: date) -> str:
     return d.strftime("%Y%m%d")
 
@@ -61,7 +67,16 @@ def _post(session: requests.Session, endpoint: str, payload: dict,
             resp.raise_for_status()
             body = resp.json()
             if body.get("errorMessage"):
-                raise TefasError(f"{endpoint}: {body['errorMessage']}")
+                msg = str(body["errorMessage"])
+                if any(p in msg for p in _EMPTY_RESULT_ERRORS):
+                    # TEFAS raises a server-side IndexOutOfBounds instead of
+                    # returning an empty list when a range holds no fund
+                    # data — e.g. a weekend or a multi-day bayram. That is
+                    # "no rows", not a failure, and letting it propagate
+                    # crashed the whole nightly run.
+                    print(f"  {endpoint}: no data in range (TEFAS: {msg})")
+                    return {"resultList": [], "toplamSayi": 0}
+                raise TefasError(f"{endpoint}: {msg}")
             return body
         except (requests.RequestException, ValueError) as err:
             last_err = err

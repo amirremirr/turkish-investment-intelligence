@@ -373,6 +373,43 @@ def test_kap_backfill_cursor_walks_down(monkeypatch):
     assert seen[-1] == (7000, 1000, True)         # continues down, no rescan
 
 
+def test_tefas_empty_range_is_not_a_failure():
+    """A weekend/holiday range makes TEFAS throw a server-side
+    IndexOutOfBounds instead of returning an empty list. That's 'no rows',
+    and letting it propagate took down the whole nightly pipeline."""
+    from tefaslab import client
+
+    class FakeResp:
+        status_code = 200
+        headers: dict = {}
+
+        def __init__(self, body):
+            self._body = body
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self._body
+
+    class FakeSession:
+        def __init__(self, body):
+            self._body = body
+
+        def post(self, *a, **k):
+            return FakeResp(self._body)
+
+    empty = FakeSession(
+        {"errorMessage": "Index 0 out of bounds for length 0"})
+    out = client._post(empty, "fonGnlBlgSiraliGetir", {})
+    assert out["resultList"] == []          # treated as no rows
+
+    # anything else must still raise — this must not swallow real errors
+    broken = FakeSession({"errorMessage": "Invalid API signature"})
+    with pytest.raises(client.TefasError):
+        client._post(broken, "fonGnlBlgSiraliGetir", {}, retries=1)
+
+
 def test_kap_number_format():
     # the parser must read both US and Turkish decimals, or "1,47" (a
     # 1.47% weight) becomes 147 — the bug that left 66/67 funds unweighted
