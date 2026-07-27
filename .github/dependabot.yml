@@ -8,6 +8,11 @@ updates:
     directory: "/web"
     schedule:
       interval: weekly
+    # eslint-config-next currently relies on ESLint 9 APIs. Revisit when the
+    # Next.js integration explicitly supports ESLint 10.
+    ignore:
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
