@@ -363,7 +363,7 @@ def cmd_research(args) -> None:
               .round(3).to_string())
     elif args.study == "diagnostics":
         print("Factor-model sanity by category "
-              "(mean betas should match mandates):\n")
+              "(mandate fit plus residual diagnostics; review flags, not proof):\n")
         print(factors.category_diagnostics(conn).to_string())
     elif args.study == "chasing":
         print(f"Do investors chase past {args.category} returns?\n"

@@ -22,7 +22,7 @@ const FINDINGS = [
     d: "Equity-fund inflows predict lower BIST returns (Newey–West t=−2.5), but only in calm markets and only for domestic equity.",
   },
   {
-    t: "Investors chase quarterly winners",
+    t: "Performance chasing does not survive fund-level testing",
     d: "Flows respond to trailing 63-day returns (t=4.3), not weekly moves — medium-term performance chasing.",
   },
   {
@@ -168,6 +168,13 @@ export default async function Home() {
           statistically supported but economically modest (R² &lt; 1% for
           flow signals); read the notes for methods and limits before
           treating any of this as durable.
+        </p>
+        <p className="-mt-2 mb-4 rounded-lg border border-accent bg-accent-soft p-3 text-xs text-fg">
+          <b>Interpretation gate:</b> no individual fund alpha survives
+          multiple-testing control, and the aggregate performance-chasing
+          result falls from t=4.3 to t=1.2 in a fund-level fixed-effects test.
+          These findings are research context, not signals to trade or proof
+          of manager skill.
         </p>
         <div className="grid gap-4 sm:grid-cols-2">
           {FINDINGS.map((f) => (

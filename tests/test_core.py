@@ -152,6 +152,22 @@ def test_fund_factor_model_returns_alpha_t(tmp_conn):
     out = factors.fund_factor_model(tmp_conn, "AAA")
     assert "alpha_t" in out
     assert out["alpha_t"] is None or isinstance(out["alpha_t"], float)
+    assert set(out["residual_diagnostics"]) == {
+        "jb", "jb_p", "durbin_watson", "bp_lm"
+    }
+
+
+def test_factor_residual_diagnostics_are_finite_for_regular_residuals():
+    from tefaslab import factors
+
+    rng = np.random.default_rng(12)
+    x = rng.normal(size=240)
+    resid = rng.normal(scale=0.3, size=240)
+    out = factors.residual_diagnostics(resid, np.column_stack([np.ones(len(x)), x]))
+    assert out["jb"] >= 0
+    assert 0 <= out["jb_p"] <= 1
+    assert 0.5 < out["durbin_watson"] < 3.5
+    assert out["bp_lm"] >= 0
 
 
 def _memo_with_factor(monkeypatch, tmp_conn, fdict):

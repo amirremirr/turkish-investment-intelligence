@@ -61,6 +61,13 @@ r_fund = α + β₁·r_BIST100(+1) + β₂·r_gold_TRY(+2)
   overlap) — deliberately conservative. Rankings use the t-statistic,
   never raw alpha (32% of funds clear |t| > 2 on the current sample).
 
+**Model boundary.** This is a deliberately compact four-factor model. It
+omits bond, sector, style and liquidity factors. Its residual is not evidence
+of manager skill; it can also contain fees, valuation timing and model
+misspecification. Each regression emits Jarque-Bera, Durbin-Watson and
+Breusch-Pagan LM diagnostics for review. Those checks can flag poor fit but
+do not make the model causal or its findings tradeable.
+
 ## 4. Fund flows
 
 TEFAS provides daily shares outstanding, so net flow is computed
@@ -118,6 +125,11 @@ correlation ≥ 0.995 and 15–20 of the top-20 unchanged
 Fee data is not exposed by TEFAS's API; the liquidity/size slots stand
 in until an expense-ratio source is added.
 
+Scores use fixed weights and are sensitivity-tested, but they remain
+heuristic rankings rather than estimates of a fund's expected investor
+outcome. They must be compared within category and must never be presented
+as a recommendation, a prediction, or proof of manager skill.
+
 ## 7. Regression methodology (research studies)
 
 - Univariate OLS with intercept; β, naive t, **Newey–West t** (Bartlett
@@ -152,6 +164,12 @@ with ~1 month lag; the real rate uses trailing, not expected,
 inflation.
 
 ## 9. Known limitations
+
+**Research-claim gate.** On the current cross-section no fund alpha survives
+Bonferroni or Benjamini-Hochberg FDR correction. No individual manager skill
+claim is citable. The category-level performance-chasing result also falls
+from about t=4.3 to about t=1.2 in the fund fixed-effects panel, so it is not
+a supported behavioural or trading claim.
 
 1. **Sample**: Jan 2024 – present (~2.5 years). Findings are one
    regime's evidence, not universal laws.
