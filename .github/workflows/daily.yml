@@ -23,6 +23,7 @@ jobs:
     env:
       EVDS_API_KEY: ${{ secrets.EVDS_API_KEY }}
       SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      REQUIRE_SUPABASE_PUBLISH: "true"
       PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
@@ -38,6 +39,13 @@ jobs:
             || echo "::warning::SUPABASE_DB_URL not set — publish will be skipped"
           [ -n "$EVDS_API_KEY" ] && echo "EVDS_API_KEY present" \
             || echo "::warning::EVDS_API_KEY not set — macro will be skipped"
+
+      - name: Require serving database credential
+        run: |
+          test -n "$SUPABASE_DB_URL" || {
+            echo "::error::SUPABASE_DB_URL is required for the public serving copy"
+            exit 1
+          }
 
       - run: pip install -r requirements.txt
 
@@ -133,3 +141,21 @@ jobs:
             logs/
             reports/
           if-no-files-found: ignore
+
+  serving-health:
+    name: Verify serving copy after pipeline
+    needs: pipeline
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - name: Verify published serving data
+        run: python scripts/health_cloud.py

@@ -1,5 +1,8 @@
 import { Card } from "@/components/ui";
 
+/* Text in the research excerpts deliberately contains ordinary prose quotes. */
+/* eslint-disable react/no-unescaped-entities */
+
 export const metadata = { title: "Research" };
 
 const REPO =
@@ -58,7 +61,7 @@ export default function ResearchPage() {
         macro regime; flow effects clear significance tests but explain
         &lt;1% of return variance and are not tradable after costs; the
         closet-index study measures index-like <i>exposure</i>, not
-        net-of-fee value (fee data isn't public via TEFAS). These are
+        net-of-fee value (fee data isn&apos;t public via TEFAS). These are
         internal research memos with open methods — not validated
         academic results, and not investment advice.
       </p>

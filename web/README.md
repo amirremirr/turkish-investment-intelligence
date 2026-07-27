@@ -66,4 +66,5 @@ npm run build    # production build (prerenders from Supabase)
   first request and cache via ISR (`revalidate`). Prerendering hundreds
   at build would open one pooler connection per fund and exhaust the
   cap. On-demand + cache is both robust and fast after the first hit.
-- `lib/db.ts` uses a per-process pool of `max: 1` for the same reason.
+- `lib/db.ts` uses a small per-process pool of `max: 5`; the transaction
+  pooler multiplexes those short-lived serverless connections.

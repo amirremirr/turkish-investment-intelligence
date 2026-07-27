@@ -13,6 +13,7 @@ Run via `python -m tefaslab daily` (optionally with --skip-raw).
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import time
 from datetime import datetime
@@ -133,7 +134,15 @@ def build_presentation(conn: sqlite3.Connection,
     _status(conn, "pipeline_complete", True)
 
 
-def run(skip_raw: bool = False, rf: float = PRESENTATION_RF) -> int:
+def run(skip_raw: bool = False, rf: float = PRESENTATION_RF,
+        require_publish: bool | None = None) -> int:
+    """Run compute work and publish the serving copy.
+
+    Cloud runs set REQUIRE_SUPABASE_PUBLISH=true and fail closed: a compute
+    run is not successful if it cannot update the public serving database.
+    """
+    if require_publish is None:
+        require_publish = os.environ.get("REQUIRE_SUPABASE_PUBLISH") == "true"
     conn = db.connect()
     t0 = time.perf_counter()
     if not skip_raw:
@@ -142,9 +151,13 @@ def run(skip_raw: bool = False, rf: float = PRESENTATION_RF) -> int:
     try:
         from . import publish as pub
         stats = pub.publish()
-        if stats:
-            _status(conn, "supabase_publish", stats)
+        if not stats:
+            raise RuntimeError("publish produced no serving-copy result")
+        _status(conn, "supabase_publish", stats)
     except Exception as err:
+        if require_publish:
+            conn.close()
+            raise RuntimeError(f"required Supabase publish failed: {err}") from err
         print(f"  publish skipped: {err}")
     print(f"\npipeline done in {time.perf_counter() - t0:.0f}s")
     print("\n== health ==")

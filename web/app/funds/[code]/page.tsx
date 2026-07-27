@@ -7,7 +7,7 @@ import {
   getSimilarFunds,
   getFundAttribution,
 } from "@/lib/queries";
-import { Card, Stat, Delta, SectionTitle, Bar } from "@/components/ui";
+import { Card, Stat, SectionTitle, Bar } from "@/components/ui";
 import { Sparkline } from "@/components/sparkline";
 import { pct, pctPoints, num, tryBn, intFmt, signClass } from "@/lib/format";
 

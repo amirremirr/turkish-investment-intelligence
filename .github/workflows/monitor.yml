@@ -7,7 +7,7 @@ name: Health monitor
 
 on:
   schedule:
-    - cron: "0 6 * * *" # daily 06:00 UTC
+    - cron: "0 6,17 * * *" # baseline + post-pipeline safety check (UTC)
   workflow_dispatch:
 
 permissions:

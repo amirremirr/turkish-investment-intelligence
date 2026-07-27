@@ -294,6 +294,26 @@ def test_publish_preserves_cloud_only_status(tmp_path, tmp_conn):
     assert pcval == "true"          # local-owned key refreshed, not stale
 
 
+def test_required_publish_fails_closed(monkeypatch):
+    """Cloud success must mean the public serving copy was updated too."""
+    from tefaslab import pipeline, publish
+
+    class Conn:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    conn = Conn()
+    monkeypatch.setattr(pipeline.db, "connect", lambda: conn)
+    monkeypatch.setattr(pipeline, "build_presentation", lambda *a, **k: None)
+    monkeypatch.setattr(pipeline.health, "report", lambda *a, **k: 0)
+    monkeypatch.setattr(publish, "publish", lambda: {})
+    with pytest.raises(RuntimeError, match="required Supabase publish failed"):
+        pipeline.run(skip_raw=True, require_publish=True)
+    assert conn.closed
+
+
 # ------------------------------------------------------- KAP parser
 
 def test_kap_parser_on_fixture():

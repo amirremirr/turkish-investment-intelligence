@@ -50,3 +50,7 @@ Five reproducible studies — start here:
 - [Usage / CLI reference](USAGE.html)
 
 *Not investment advice. Built for research and education.*
+## Operations and governance
+
+- [Operations, releases & incident response](OPERATIONS.html)
+- [Data corrections, privacy & public-research policy](DATA_POLICY.html)
