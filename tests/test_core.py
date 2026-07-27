@@ -173,7 +173,7 @@ def test_factor_residual_diagnostics_are_finite_for_regular_residuals():
 def _memo_with_factor(monkeypatch, tmp_conn, fdict):
     """Render a memo with a controlled factor-model result."""
     import pandas as pd
-    from tefaslab import memo, factors
+    from tefaslab import memo, factors, rigor
     tmp_conn.execute("INSERT OR IGNORE INTO funds VALUES "
                      "('AAA','TEST FON','YAT','Equity Turkey')")
     tmp_conn.executemany(
@@ -188,6 +188,8 @@ def _memo_with_factor(monkeypatch, tmp_conn, fdict):
     }], index=["AAA"])
     monkeypatch.setattr(factors, "fund_factor_model",
                         lambda conn, code, **kw: fdict)
+    monkeypatch.setattr(rigor, "_cash_daily",
+                        lambda conn: pd.Series(dtype=float))
     return memo.generate_memo(tmp_conn, "AAA", rf=0.4, table=table)
 
 
@@ -196,25 +198,44 @@ _BASE_F = {"alpha_annual": 0.5, "r_squared": 0.5, "unexplained_return": 0,
                        "usdtry": {"beta": 0.0}, "nasdaq_try": {"beta": 0.0}}}
 
 
-def test_memo_gates_insignificant_alpha(monkeypatch, tmp_conn):
+def test_memo_marks_insignificant_alpha_non_citable(monkeypatch, tmp_conn):
     text = _memo_with_factor(monkeypatch, tmp_conn,
                              {**_BASE_F, "alpha_t": 0.5})
-    assert "not statistically significant" in text
+    assert "No individual factor-model alpha is citable" in text
     assert "Positive factor-adjusted performance" not in text
 
 
-def test_memo_praises_significant_alpha(monkeypatch, tmp_conn):
+def test_memo_does_not_promote_nominally_significant_alpha(monkeypatch, tmp_conn):
     text = _memo_with_factor(monkeypatch, tmp_conn,
                              {**_BASE_F, "alpha_t": 3.2})
-    assert "Positive factor-adjusted performance" in text
-    assert "t = 3.2" in text
+    assert "No individual factor-model alpha is citable" in text
+    assert "Positive factor-adjusted performance" not in text
 
 
-def test_memo_flags_significant_negative_alpha(monkeypatch, tmp_conn):
+def test_memo_does_not_promote_individual_negative_alpha_claim(monkeypatch, tmp_conn):
     text = _memo_with_factor(
         monkeypatch, tmp_conn,
         {**_BASE_F, "alpha_annual": -0.3, "alpha_t": -3.0})
-    assert "Significantly negative factor-adjusted" in text
+    assert "No individual factor-model alpha is citable" in text
+    assert "Significantly negative factor-adjusted" not in text
+
+
+def test_skill_score_defaults_to_within_category_percentiles(tmp_conn):
+    import pandas as pd
+    from tefaslab import quality
+
+    components = pd.DataFrame({
+        "title": ["A1", "A2", "B1", "B2"],
+        "category": ["A", "A", "B", "B"],
+        "ret_1y": [0.1] * 4, "sharpe": [1.0] * 4,
+        "max_dd": [-0.1] * 4, "alpha_annual": [0.0] * 4,
+        "alpha_t": [1.0, 2.0, 10.0, 20.0],
+        "consistency": [0.5] * 4, "r_squared": [0.5] * 4,
+        "aum": [1e9] * 4,
+    }, index=["A1", "A2", "B1", "B2"])
+    out = quality.skill_scores(tmp_conn, components=components)
+    assert out.loc["A1", "skill_score"] == out.loc["B1", "skill_score"]
+    assert out.loc["A2", "skill_score"] == out.loc["B2", "skill_score"]
 
 
 # -------------------------------------------- TEFAS contract check

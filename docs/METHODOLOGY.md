@@ -130,6 +130,10 @@ heuristic rankings rather than estimates of a fund's expected investor
 outcome. They must be compared within category and must never be presented
 as a recommendation, a prediction, or proof of manager skill.
 
+The published screener uses category-relative percentiles and an
+excess-of-cash, restructuring-clipped factor specification. It deliberately
+does not turn an individual alpha t-statistic into a manager-skill claim.
+
 ## 7. Regression methodology (research studies)
 
 - Univariate OLS with intercept; β, naive t, **Newey–West t** (Bartlett
@@ -170,6 +174,12 @@ Bonferroni or Benjamini-Hochberg FDR correction. No individual manager skill
 claim is citable. The category-level performance-chasing result also falls
 from about t=4.3 to about t=1.2 in the fund fixed-effects panel, so it is not
 a supported behavioural or trading claim.
+
+**Exploratory-search control.** A result selected after trying multiple
+horizons, categories, regimes or specifications is exploratory. A product
+claim requires a pre-specified question, model, outcome, split date and
+success criterion, followed by an untouched holdout check. Multiple-testing
+control must cover the full family of claims, not only fund alpha tests.
 
 1. **Sample**: Jan 2024 – present (~2.5 years). Findings are one
    regime's evidence, not universal laws.

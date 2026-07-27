@@ -103,8 +103,15 @@ def _factor_returns(conn: sqlite3.Connection) -> pd.DataFrame:
 
 
 def fund_factor_model(conn: sqlite3.Connection, code: str,
-                      days: int = 252, min_obs: int = 60) -> dict:
-    """Fit the factor model for one fund over the trailing window."""
+                      days: int = 252, min_obs: int = 60,
+                      rf_daily: pd.Series | None = None,
+                      clip_returns: float | None = None) -> dict:
+    """Fit the factor model for one fund over the trailing window.
+
+    When ``rf_daily`` is supplied, fund and factor returns are estimated in
+    excess-of-cash terms. ``clip_returns`` masks mechanical NAV resets before
+    fitting. Callers that make an evaluative claim should supply both.
+    """
     code = code.upper()
     nav = pd.read_sql_query(
         "SELECT date, price FROM prices WHERE code = ? ORDER BY date",
@@ -114,8 +121,13 @@ def fund_factor_model(conn: sqlite3.Connection, code: str,
         raise KeyError(f"No data for fund {code}")
 
     fund_ret = nav.pct_change().dropna().tail(days)
+    if clip_returns is not None:
+        fund_ret = fund_ret.mask(fund_ret.abs() > clip_returns)
     fx = _factor_returns(conn)
     daily = pd.concat([fund_ret.rename("fund"), fx], axis=1).dropna()
+    if rf_daily is not None:
+        cash = rf_daily.reindex(daily.index).ffill()
+        daily = daily.sub(cash, axis=0).dropna()
     if len(daily) < min_obs:
         raise ValueError(f"Only {len(daily)} overlapping observations "
                          f"for {code} (need {min_obs})")
@@ -143,8 +155,10 @@ def fund_factor_model(conn: sqlite3.Connection, code: str,
 
     # attribution over the same window (daily returns, full window)
     start, end = daily.index[0], daily.index[-1]
-    window_nav = nav.loc[start:end]
-    fund_total = float(window_nav.iloc[-1] / window_nav.iloc[0] - 1)
+    # ``daily`` is the same return basis used for the regression (raw or
+    # excess-of-cash), so attribution and its unexplained remainder remain
+    # internally consistent.
+    fund_total = float((1 + daily["fund"]).prod() - 1)
     contributions = {}
     for i, f in enumerate(factor_names):
         factor_total = float((1 + daily[f]).prod() - 1)

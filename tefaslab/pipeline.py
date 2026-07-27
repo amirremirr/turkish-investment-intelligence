@@ -20,7 +20,7 @@ from datetime import datetime
 
 from . import (benchmarks, classify, db, evds, factors, flows, health,
                ingest, kap, metrics, quality, regime, research, smartmoney,
-               stockintel, stocks)
+               stockintel, stocks, rigor)
 
 PRESENTATION_RF = 0.40  # annual risk-free rate baked into dash tables
 
@@ -81,11 +81,17 @@ def build_presentation(conn: sqlite3.Connection,
     m.reset_index().to_sql("dash_metrics", conn, if_exists="replace",
                            index=False)
 
-    b = step("dash_betas", lambda: factors.all_factor_betas(conn))
+    # Presentation metrics must use the same cash-adjusted, reset-clipped
+    # model as the research rigor gate. Otherwise cash carry can become
+    # apparent alpha in the live product.
+    cash_daily = rigor._cash_daily(conn)
+    b = step("dash_betas", lambda: factors.all_factor_betas(
+        conn, rf_daily=cash_daily, clip_returns=rigor.MAX_DAILY_MOVE))
     b.reset_index().to_sql("dash_betas", conn, if_exists="replace",
                            index=False)
 
-    q = step("dash_quality", lambda: quality.combined_scores(conn, rf=rf))
+    q = step("dash_quality", lambda: quality.combined_scores(
+        conn, rf=rf, within_category=True))
     q.reset_index().to_sql("dash_quality", conn, if_exists="replace",
                            index=False)
 
