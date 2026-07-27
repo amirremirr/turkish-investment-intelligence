@@ -38,7 +38,7 @@ jobs:
             echo "::error::No DB in the Actions cache — run the daily "\
             "pipeline (bootstrap) first."; exit 1; }
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
