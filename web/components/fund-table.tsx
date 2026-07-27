@@ -25,7 +25,7 @@ const COLS: {
   { key: "max_dd", label: "Max DD", fmt: (r) => pct(r.max_dd), sign: true },
   {
     key: "skill_score",
-    label: "Skill score",
+    label: "Research score",
     title: "A fixed-weight heuristic. It is not proof of manager skill; compare within category.",
     fmt: (r) => num(r.skill_score, 0),
   },

@@ -510,7 +510,7 @@ def main() -> None:
     p.set_defaults(func=cmd_smartmoney)
 
     p = sub.add_parser("quality",
-                       help="Manager Skill / Investor Suitability scores")
+                       help="Research / Investor Suitability scores")
     p.add_argument("--view", choices=["combined", "skill", "suitability"],
                    default="combined")
     p.add_argument("--within-category", action="store_true",

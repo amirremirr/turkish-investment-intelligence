@@ -121,7 +121,7 @@ export default async function FundPage({
                   className="text-xs uppercase text-muted"
                   title="Heuristic ranking built from alpha t-statistic, consistency, drawdown and factor independence. It is not proof of manager skill."
                 >
-                  Skill score
+                  Research score
                 </div>
                 <div className="tnum text-2xl font-semibold text-accent">
                   {num(fund.skill_score, 0)}
