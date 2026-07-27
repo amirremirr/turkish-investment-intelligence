@@ -17,12 +17,13 @@ Per source:
   OK       valid response, shaped as expected
   CHANGED  a contract assertion fired — schema/template moved, needs eyes
   DOWN     unreachable after the client's own retries + one outer retry
+  WARN     known transient source condition; recorded but does not page
   SKIP     precondition missing (e.g. no EVDS key in this environment)
 
 Exits non-zero if any source is CHANGED or DOWN, which makes the
-workflow open/refresh a GitHub issue. DOWN can occasionally be a
-transient blip; sustained outages are also caught downstream by the
-daily freshness monitor, so this errs toward surfacing early.
+workflow open/refresh a GitHub issue. A Yahoo HTTP 429 is a WARN: GitHub
+runner IPs are routinely throttled even while the serving benchmark is
+current, and its freshness is checked downstream by the daily monitor.
 """
 
 from __future__ import annotations
@@ -32,12 +33,17 @@ import sys
 import time
 from datetime import date, datetime, timedelta, timezone
 
+import requests
+
 # Run as a script -> scripts/ is on sys.path, not the repo root; put the
 # repo root first so `import tefaslab` works from any working directory.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-OK, CHANGED, DOWN, SKIP = "OK", "CHANGED", "DOWN", "SKIP"
-ICON = {OK: "[ OK ]", CHANGED: "[CHG!]", DOWN: "[DOWN]", SKIP: "[skip]"}
+OK, CHANGED, DOWN, WARN, SKIP = "OK", "CHANGED", "DOWN", "WARN", "SKIP"
+ICON = {
+    OK: "[ OK ]", CHANGED: "[CHG!]", DOWN: "[DOWN]",
+    WARN: "[warn]", SKIP: "[skip]",
+}
 
 # Recent window wide enough to span a weekend / short holiday so an
 # empty result means "source problem", not "no trading that day".
@@ -97,7 +103,36 @@ def check_yahoo() -> tuple[str, str]:
     start = (date.today() - timedelta(days=_WINDOW_DAYS)).isoformat()
     s = benchmarks._closes("XU100.IS", start)
     if s is None or len(s) == 0:
-        return DOWN, "XU100.IS returned no closes (Yahoo down or ticker gone)"
+        # yfinance turns several upstream failures into an empty frame. Probe
+        # Yahoo's chart endpoint only to classify that empty result; the normal
+        # path above still exercises the pipeline client.
+        try:
+            r = requests.get(
+                "https://query1.finance.yahoo.com/v8/finance/chart/XU100.IS",
+                params={"range": "8d", "interval": "1d"},
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=20,
+            )
+        except requests.RequestException as e:
+            return DOWN, f"XU100.IS returned no closes; Yahoo probe failed: {e}"
+        if r.status_code == 429:
+            return WARN, (
+                "Yahoo rate-limited this runner (HTTP 429); serving benchmark "
+                "freshness is monitored separately"
+            )
+        if r.status_code != 200:
+            return DOWN, f"XU100.IS returned no closes; Yahoo probe HTTP {r.status_code}"
+        try:
+            result = r.json().get("chart", {}).get("result", [])
+            closes = result[0].get("indicators", {}).get("quote", [{}])[0].get("close", [])
+        except (AttributeError, IndexError, ValueError):
+            return CHANGED, "Yahoo chart response no longer has the expected close path"
+        if not closes or not any(value is not None for value in closes):
+            return DOWN, "XU100.IS returned no closes from Yahoo chart endpoint"
+        return CHANGED, (
+            "Yahoo chart endpoint has closes but the pipeline client returned none; "
+            "review yfinance compatibility"
+        )
     last = float(s.iloc[-1])
     if not last > 0:
         return CHANGED, f"XU100.IS last close not positive: {last}"
@@ -187,6 +222,12 @@ def main() -> int:
             parts.append(f"{len(down)} DOWN (unreachable)")
         print("FAIL: " + ", ".join(parts) + " - see lines marked above.")
         return 1
+    warnings = [r for r in results if r[1] == WARN]
+    if warnings:
+        for label, _, detail in warnings:
+            print(f"::warning title={label} source warning::{detail}")
+        print(f"WARN: {len(warnings)} transient source warning(s); serving freshness remains monitored.")
+        return 0
     print("All sources reachable and shaped as expected.")
     return 0
 

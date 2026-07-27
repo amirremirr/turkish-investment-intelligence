@@ -482,6 +482,25 @@ def test_source_check_unexpected_error_is_down():
     assert sc._run(boom) == (sc.DOWN, "unexpected RuntimeError: kaboom")
 
 
+def test_source_check_yahoo_rate_limit_is_a_warning(monkeypatch):
+    from tefaslab import benchmarks
+
+    class Response:
+        status_code = 429
+
+    monkeypatch.setattr(benchmarks, "_closes", lambda *_: [])
+    monkeypatch.setattr(sc.requests, "get", lambda *_, **__: Response())
+    status, detail = sc.check_yahoo()
+    assert status == sc.WARN
+    assert "rate-limited" in detail
+
+
+def test_source_check_warn_does_not_page(monkeypatch):
+    monkeypatch.setattr(sc.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(sc, "CHECKS", [("Yahoo", lambda: (sc.WARN, "429"))])
+    assert sc.main() == 0
+
+
 # ------------------------------------------------- statistical rigor
 
 from tefaslab import rigor  # noqa: E402
