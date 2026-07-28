@@ -1,0 +1,131 @@
+name: Continue validated monthly holdings recovery
+
+on:
+  # The validation workflow is deliberately short. This continuation is only
+  # started after it completes successfully, and only when the saved database
+  # contains actual portfolio reports for the target month.
+  workflow_run:
+    workflows: ["Monthly holdings recovery"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-pipeline
+  cancel-in-progress: false
+
+env:
+  MKK_USERNAME: ${{ secrets.MKK_USERNAME }}
+  MKK_PASSWORD: ${{ secrets.MKK_PASSWORD }}
+  SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+  REQUIRE_SUPABASE_PUBLISH: "true"
+  PYTHONIOENCODING: utf-8
+
+jobs:
+  gate:
+    name: Verify validation found reports
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.coverage.outputs.proceed }}
+      period: ${{ steps.coverage.outputs.period }}
+      reports: ${{ steps.coverage.outputs.reports }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Restore validated database
+        uses: actions/cache/restore@v4
+        with:
+          path: data/funds.db
+          key: funds-db-${{ github.event.workflow_run.id }}-pass-2
+      - name: Require restored database and serving credential
+        run: |
+          test -f data/funds.db || { echo "::error::validation database was not saved"; exit 1; }
+          test -n "$SUPABASE_DB_URL" || { echo "::error::SUPABASE_DB_URL is required"; exit 1; }
+      - name: Require evidence before long recovery
+        id: coverage
+        run: |
+          python - <<'PY'
+          import os
+          import sqlite3
+          from tefaslab import kap
+
+          period = kap.latest_collection_period()
+          conn = sqlite3.connect("data/funds.db")
+          reports = conn.execute(
+              "SELECT COUNT(DISTINCT fund_code) FROM mkk_disclosures "
+              "WHERE reporting_period=? AND status IN ('found', 'parsed')",
+              (period,),
+          ).fetchone()[0]
+          conn.close()
+          proceed = "true" if reports else "false"
+          print(f"MKK validation: period={period}, discovered fund reports={reports}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"proceed={proceed}\nperiod={period}\nreports={reports}\n")
+          PY
+
+  first-extended-pass:
+    name: Extended recovery pass 1 of 2
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Restore validated database
+        uses: actions/cache/restore@v4
+        with:
+          path: data/funds.db
+          key: funds-db-${{ github.event.workflow_run.id }}-pass-2
+      - name: Continue four paced recovery cycles
+        run: |
+          test -f data/funds.db || { echo "::error::validation database was not saved"; exit 1; }
+          python -m tefaslab holdings monthly --count 5000 --batches 50 --details 220 --parse-limit 150 --cycles 4
+          python -m tefaslab holdings stats
+          python -m tefaslab daily --skip-raw
+      - name: Save database for final pass
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/funds.db
+          key: funds-db-${{ github.event.workflow_run.id }}-extended-pass-1
+
+  second-extended-pass:
+    name: Extended recovery pass 2 of 2
+    needs: first-extended-pass
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Restore database from extended pass 1
+        uses: actions/cache/restore@v4
+        with:
+          path: data/funds.db
+          key: funds-db-${{ github.event.workflow_run.id }}-extended-pass-1
+      - name: Continue four paced recovery cycles
+        run: |
+          test -f data/funds.db || { echo "::error::extended recovery database was not saved"; exit 1; }
+          python -m tefaslab holdings monthly --count 5000 --batches 50 --details 220 --parse-limit 150 --cycles 4
+          python -m tefaslab holdings stats
+          python -m tefaslab daily --skip-raw
+      - name: Save final database
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/funds.db
+          key: funds-db-${{ github.event.workflow_run.id }}-extended-pass-2
