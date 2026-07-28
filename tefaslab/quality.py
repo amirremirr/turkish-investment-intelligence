@@ -29,7 +29,7 @@ import sqlite3
 import numpy as np
 import pandas as pd
 
-from . import factors, flows, metrics
+from . import factors, flows, metrics, rigor
 
 SKILL_WEIGHTS = {
     "alpha": 0.35,
@@ -60,7 +60,12 @@ def _components(conn: sqlite3.Connection, rf: float, min_aum: float,
     base["consistency"] = ((roll > 0).sum() / roll.notna().sum()) \
         .reindex(base.index)
 
-    betas = factors.all_factor_betas(conn, min_obs=60)
+    # Scores should never reward deposit carry or a restructuring reset as
+    # apparent manager skill. Use the same adjusted specification that the
+    # research gate evaluates.
+    betas = factors.all_factor_betas(
+        conn, min_obs=60, rf_daily=rigor._cash_daily(conn),
+        clip_returns=rigor.MAX_DAILY_MOVE)
     base["alpha_annual"] = betas["alpha_annual"].reindex(base.index)
     base["alpha_t"] = betas["alpha_t"].reindex(base.index)
     base["r_squared"] = betas["r_squared"].reindex(base.index)
@@ -88,7 +93,7 @@ def _rank(series: pd.Series, groups: pd.Series | None) -> pd.Series:
 
 def skill_scores(conn: sqlite3.Connection, rf: float = 0.0,
                  min_aum: float = 100e6, min_investors: int = 500,
-                 min_obs: int = 126, within_category: bool = False,
+                 min_obs: int = 126, within_category: bool = True,
                  components: pd.DataFrame | None = None) -> pd.DataFrame:
     c = components if components is not None \
         else _components(conn, rf, min_aum, min_investors, min_obs)
@@ -110,8 +115,8 @@ def skill_scores(conn: sqlite3.Connection, rf: float = 0.0,
 
 
 def suitability_scores(conn: sqlite3.Connection, rf: float = 0.0,
-                       min_aum: float = 100e6, min_investors: int = 500,
-                       min_obs: int = 126, within_category: bool = False,
+                        min_aum: float = 100e6, min_investors: int = 500,
+                        min_obs: int = 126, within_category: bool = True,
                        components: pd.DataFrame | None = None) -> pd.DataFrame:
     c = components if components is not None \
         else _components(conn, rf, min_aum, min_investors, min_obs)
@@ -132,12 +137,14 @@ def suitability_scores(conn: sqlite3.Connection, rf: float = 0.0,
 
 
 def combined_scores(conn: sqlite3.Connection, rf: float = 0.0,
-                    **kwargs) -> pd.DataFrame:
+                    within_category: bool = True, **kwargs) -> pd.DataFrame:
     c = _components(conn, rf, kwargs.get("min_aum", 100e6),
                     kwargs.get("min_investors", 500),
                     kwargs.get("min_obs", 126))
-    skill = skill_scores(conn, rf=rf, components=c, **kwargs)
-    suit = suitability_scores(conn, rf=rf, components=c, **kwargs)
+    skill = skill_scores(conn, rf=rf, components=c,
+                         within_category=within_category, **kwargs)
+    suit = suitability_scores(conn, rf=rf, components=c,
+                              within_category=within_category, **kwargs)
     out = skill[["title", "category", "ret_1y", "sharpe", "max_dd",
                  "alpha_annual", "aum", "skill_score"]].join(
         suit["suitability_score"])

@@ -64,6 +64,11 @@ thing.
 
 ## Interpretation & limitations
 
+**Claim status: exploratory.** The reported 21-day horizon, volatility split
+and category comparisons are a family of related tests, not a pre-registered
+single hypothesis. The weak holdout statistic means matching sign alone is
+not confirmation. This is descriptive context only and is not a trade signal.
+
 Consistent with the dumb-money literature: retail allocation follows
 comfort, and comfort peaks late. Sample covers a single 2.5-year
 regime; t-statistics are modest and horizon overlap inflates them.

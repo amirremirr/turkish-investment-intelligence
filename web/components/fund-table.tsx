@@ -45,14 +45,14 @@ const COLS: {
   },
   {
     key: "skill_score",
-    label: "Skill",
-    help: "Manager-quality score: factor alpha, consistency, downside behavior, and factor independence.",
+    label: "Research score",
+    help: "A fixed-weight heuristic. It is not proof of manager skill; compare within category.",
     fmt: (row) => num(row.skill_score, 0),
   },
   {
     key: "suitability_score",
-    label: "Suitability",
-    help: "Typical-investor score: Sharpe, drawdown, stability, liquidity, and size.",
+    label: "Suitability score",
+    help: "A fixed-weight comparison aid, not a personalised recommendation.",
     fmt: (row) => num(row.suitability_score, 0),
   },
   {
@@ -164,6 +164,11 @@ export function FundTable({ funds }: { funds: FundRow[] }) {
         </Select>
         <span className="text-sm text-muted">{rows.length} funds</span>
       </div>
+      <p className="-mt-1 mb-4 text-xs text-muted">
+        Scores are fixed-weight research heuristics, not recommendations or
+        citable evidence of individual manager skill. Compare funds within the
+        same category.
+      </p>
 
       <div className="overflow-x-auto rounded-xl border">
         <table className="w-full text-sm">

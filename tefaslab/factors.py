@@ -49,6 +49,45 @@ FACTORS = {
 K_DAYS = 5  # overlapping compound-return window
 
 
+def residual_diagnostics(resid: np.ndarray, X: np.ndarray) -> dict:
+    """Lightweight residual checks for every factor regression.
+
+    These diagnostics are deliberately descriptive: Jarque-Bera tests the
+    normal approximation, Durbin-Watson exposes serial correlation, and the
+    Breusch-Pagan LM statistic exposes variance related to the included
+    factors. They do not turn the four-factor model into a causal model or
+    replace overlap-robust inference.
+    """
+    resid = np.asarray(resid, float)
+    n = len(resid)
+    if n < 8 or not np.isfinite(resid).all():
+        return {"jb": np.nan, "jb_p": np.nan, "durbin_watson": np.nan,
+                "bp_lm": np.nan}
+    centered = resid - resid.mean()
+    variance = float(np.mean(centered ** 2))
+    if variance <= 0:
+        return {"jb": np.nan, "jb_p": np.nan, "durbin_watson": np.nan,
+                "bp_lm": np.nan}
+    skew = float(np.mean(centered ** 3) / variance ** 1.5)
+    kurt = float(np.mean(centered ** 4) / variance ** 2)
+    jb = float(n / 6 * (skew ** 2 + (kurt - 3) ** 2 / 4))
+    # For chi-square with two degrees of freedom, survival is exp(-x/2).
+    jb_p = float(np.exp(-jb / 2))
+    dw = float(np.diff(resid) @ np.diff(resid) / (resid @ resid)) \
+        if resid @ resid > 0 else np.nan
+
+    # Auxiliary regression of squared residuals on the original regressors.
+    # The LM statistic (n * R2) is reported rather than a p-value so users do
+    # not mistake this compact diagnostic for a complete specification test.
+    sq = resid ** 2
+    fit, _, _, _ = np.linalg.lstsq(X, sq, rcond=None)
+    fitted = X @ fit
+    sst = float(((sq - sq.mean()) ** 2).sum())
+    r2 = 1 - float(((sq - fitted) ** 2).sum()) / sst if sst > 0 else 0.0
+    return {"jb": jb, "jb_p": jb_p, "durbin_watson": dw,
+            "bp_lm": float(n * max(0.0, r2))}
+
+
 def _compound(returns: pd.Series | pd.DataFrame, k: int):
     return (1 + returns).rolling(k).apply(np.prod, raw=True) - 1
 
@@ -64,8 +103,15 @@ def _factor_returns(conn: sqlite3.Connection) -> pd.DataFrame:
 
 
 def fund_factor_model(conn: sqlite3.Connection, code: str,
-                      days: int = 252, min_obs: int = 60) -> dict:
-    """Fit the factor model for one fund over the trailing window."""
+                      days: int = 252, min_obs: int = 60,
+                      rf_daily: pd.Series | None = None,
+                      clip_returns: float | None = None) -> dict:
+    """Fit the factor model for one fund over the trailing window.
+
+    When ``rf_daily`` is supplied, fund and factor returns are estimated in
+    excess-of-cash terms. ``clip_returns`` masks mechanical NAV resets before
+    fitting. Callers that make an evaluative claim should supply both.
+    """
     code = code.upper()
     nav = pd.read_sql_query(
         "SELECT date, price FROM prices WHERE code = ? ORDER BY date",
@@ -75,8 +121,13 @@ def fund_factor_model(conn: sqlite3.Connection, code: str,
         raise KeyError(f"No data for fund {code}")
 
     fund_ret = nav.pct_change().dropna().tail(days)
+    if clip_returns is not None:
+        fund_ret = fund_ret.mask(fund_ret.abs() > clip_returns)
     fx = _factor_returns(conn)
     daily = pd.concat([fund_ret.rename("fund"), fx], axis=1).dropna()
+    if rf_daily is not None:
+        cash = rf_daily.reindex(daily.index).ffill()
+        daily = daily.sub(cash, axis=0).dropna()
     if len(daily) < min_obs:
         raise ValueError(f"Only {len(daily)} overlapping observations "
                          f"for {code} (need {min_obs})")
@@ -88,6 +139,7 @@ def fund_factor_model(conn: sqlite3.Connection, code: str,
                         + [data[f].to_numpy() for f in factor_names])
     coef, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
     resid = y - X @ coef
+    diagnostics = residual_diagnostics(resid, X)
     r2 = 1 - resid.var() / y.var() if y.var() > 0 else np.nan
     alpha_daily = float(coef[0]) / K_DAYS  # intercept is per K-day period
     # alpha t-stat, same estimator as the batch path (all_factor_betas):
@@ -103,8 +155,10 @@ def fund_factor_model(conn: sqlite3.Connection, code: str,
 
     # attribution over the same window (daily returns, full window)
     start, end = daily.index[0], daily.index[-1]
-    window_nav = nav.loc[start:end]
-    fund_total = float(window_nav.iloc[-1] / window_nav.iloc[0] - 1)
+    # ``daily`` is the same return basis used for the regression (raw or
+    # excess-of-cash), so attribution and its unexplained remainder remain
+    # internally consistent.
+    fund_total = float((1 + daily["fund"]).prod() - 1)
     contributions = {}
     for i, f in enumerate(factor_names):
         factor_total = float((1 + daily[f]).prod() - 1)
@@ -127,6 +181,10 @@ def fund_factor_model(conn: sqlite3.Connection, code: str,
         "alpha_annual": round(alpha_daily * metrics.TRADING_DAYS, 4),
         "alpha_t": round(alpha_t, 2) if np.isfinite(alpha_t) else None,
         "r_squared": round(float(r2), 3),
+        "residual_diagnostics": {
+            key: round(float(value), 3) if np.isfinite(value) else None
+            for key, value in diagnostics.items()
+        },
         "factors": contributions,
         "unexplained_return": round(fund_total - explained, 4),
     }
@@ -173,6 +231,7 @@ def all_factor_betas(conn: sqlite3.Connection, days: int = 252,
         X = base[mask]
         coef, _, _, _ = np.linalg.lstsq(X, y[mask], rcond=None)
         resid = y[mask] - X @ coef
+        diagnostics = residual_diagnostics(resid, X)
         var = y[mask].var()
         # OLS standard errors. Overlapping K-day returns induce serial
         # correlation, so scale the naive variance by ~K (a crude
@@ -192,6 +251,10 @@ def all_factor_betas(conn: sqlite3.Connection, days: int = 252,
             **{f"beta_{f}": coef[i + 1] for i, f in enumerate(factor_names)},
             "r_squared": 1 - resid.var() / var if var > 0 else np.nan,
             "n_obs": int(mask.sum()),
+            "resid_jb": diagnostics["jb"],
+            "resid_jb_p": diagnostics["jb_p"],
+            "resid_dw": diagnostics["durbin_watson"],
+            "resid_bp_lm": diagnostics["bp_lm"],
         })
     out = pd.DataFrame(rows).set_index("code")
     meta = pd.read_sql_query(
@@ -214,5 +277,8 @@ def category_diagnostics(conn: sqlite3.Connection,
         beta_usd=("beta_usdtry", "mean"),
         beta_nasdaq=("beta_nasdaq_try", "mean"),
         pct_sig_alpha=("alpha_t", lambda s: (s.abs() > 2).mean()),
+        median_jb_p=("resid_jb_p", "median"),
+        mean_dw=("resid_dw", "mean"),
+        median_bp_lm=("resid_bp_lm", "median"),
     ).round(3)
     return agg.sort_values("funds", ascending=False)
