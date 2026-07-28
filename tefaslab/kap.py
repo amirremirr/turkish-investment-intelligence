@@ -36,6 +36,14 @@ FILE = "https://www.kap.org.tr/tr/api/file/download/{}"
 
 ISIN_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{9}\d$")
 PAUSE = 0.6
+# Empty KAP ids are normal; waiting 30 seconds twice for each one made a
+# bounded backfill crawl at only ~250 ids per run. Keep enough time for a
+# legitimate response, retry only ambiguous/transient responses once, and let
+# the persisted cursor revisit what remains later.
+EXPORT_TIMEOUT = 12
+EQUITY_ORIENTED_CATEGORIES = (
+    "Equity Turkey", "Foreign Equity", "Mixed", "Variable",
+)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS kap_disclosures (
@@ -141,6 +149,34 @@ def set_title_alias(conn: sqlite3.Connection, kap_title: str, code: str,
 
 # ---------------------------------------------------------------- scan
 
+def _fetch_export(s: requests.Session, did: int):
+    """Fetch one cheap KAP export without spending the scan on known empties.
+
+    Returns the last response (or ``None``) plus the number of retry attempts.
+    A 404/410 is a normal absent disclosure and is never retried. Empty 200s,
+    throttles and server errors get one short retry because KAP intermittently
+    serves a blank body for a real disclosure.
+    """
+    last = None
+    retries = 0
+    for attempt in range(2):
+        try:
+            last = s.get(EXPORT.format(did), headers=H, timeout=EXPORT_TIMEOUT)
+        except requests.RequestException:
+            if attempt == 0:
+                retries += 1
+                time.sleep(1.5)
+                continue
+            return None, retries
+        if last.status_code == 200 and len(last.content) >= 500:
+            return last, retries
+        if last.status_code in (404, 410):
+            return last, retries
+        if attempt == 0:
+            retries += 1
+            time.sleep(1.5 if last.status_code == 200 else 2.5)
+    return last, retries
+
 def scan_range(conn: sqlite3.Connection, start: int, count: int,
                session: requests.Session | None = None,
                max_seconds: float | None = None,
@@ -157,7 +193,7 @@ def scan_range(conn: sqlite3.Connection, start: int, count: int,
     contiguous when a backfill stops early.
     """
     s = session or requests.Session()
-    found = empty = 0
+    found = empty = transient_retries = 0
     consecutive_empty = 0
     t0 = time.time()
     scanned = 0
@@ -186,16 +222,8 @@ def scan_range(conn: sqlite3.Connection, start: int, count: int,
             continue
         # the export endpoint intermittently returns empty bodies under
         # load — retry empties once with a longer pause
-        r = None
-        for attempt in range(2):
-            try:
-                r = s.get(EXPORT.format(did), headers=H, timeout=30)
-            except requests.RequestException:
-                time.sleep(3)
-                continue
-            if r.status_code == 200 and len(r.content) >= 500:
-                break
-            time.sleep(2.5)
+        r, retries = _fetch_export(s, did)
+        transient_retries += retries
         if r is None or r.status_code != 200 or len(r.content) < 500:
             empty += 1
             consecutive_empty += 1
@@ -220,6 +248,7 @@ def scan_range(conn: sqlite3.Connection, start: int, count: int,
     # remember the frontier for forward scanning
     hi = conn.execute("SELECT MAX(id) FROM kap_disclosures").fetchone()[0]
     return {"scanned": scanned, "found": found, "empty": empty,
+            "transient_retries": transient_retries,
             "max_id": hi, "last_content": last_content,
             "last_scanned": last_scanned,
             "seconds": round(time.time() - t0)}
@@ -377,6 +406,14 @@ def coverage_summary(conn: sqlite3.Connection) -> dict:
     """).fetchone()
     latest = conn.execute(
         "SELECT MAX(period) FROM fund_holdings").fetchone()[0]
+    marks = ",".join("?" for _ in EQUITY_ORIENTED_CATEGORIES)
+    equity = conn.execute(
+        f"SELECT COUNT(*) AS universe, "
+        f"SUM(CASE WHEN h.code IS NOT NULL THEN 1 ELSE 0 END) AS parsed "
+        f"FROM funds f LEFT JOIN (SELECT DISTINCT code FROM fund_holdings) h "
+        f"ON h.code=f.code WHERE f.category IN ({marks})",
+        EQUITY_ORIENTED_CATEGORIES,
+    ).fetchone()
 
     def n(value) -> int:
         return int(value or 0)
@@ -392,6 +429,8 @@ def coverage_summary(conn: sqlite3.Connection) -> dict:
         "error_reports": n(reports[2]),
         "unlinked_reports": n(reports[3]),
         "latest_period": latest,
+        "equity_oriented_universe": n(equity[0]),
+        "equity_oriented_parsed": n(equity[1]),
     }
 
 
@@ -752,6 +791,17 @@ def requeue_errors(conn: sqlite3.Connection, limit: int = 50) -> dict:
             "last_error=NULL WHERE id=?", ((did,) for did in ids))
         conn.commit()
     return {"requeued": len(ids)}
+
+
+def error_report(conn: sqlite3.Connection, limit: int = 100) -> list[dict]:
+    """Return terminal parser/mapping failures for template triage."""
+    _ensure_schema(conn)
+    rows = conn.execute(
+        "SELECT id, fund_title, code, year, period, attempts, last_error "
+        "FROM kap_disclosures WHERE status='error' ORDER BY id DESC LIMIT ?",
+        (limit,)).fetchall()
+    keys = ("id", "fund_title", "code", "year", "period", "attempts", "last_error")
+    return [dict(zip(keys, row)) for row in rows]
 
 
 # --------------------------------------------------------------- query

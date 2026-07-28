@@ -17,7 +17,7 @@ production ([tefaslab/kap.py](../tefaslab/kap.py)).*
 | Title resolution | ✅ PDF code, exact title, unique normalised title, and operator-reviewed aliases; never fuzzy-matched |
 | Queries: `holdings who ASELS`, `holdings fund IJZ`, `holdings stats` | ✅ CLI |
 | Analytics: `crowding` (breadth of ownership), `active` (peer active share), `attrib` (stock-level contribution) | ✅ [ownership.py](../tefaslab/ownership.py) — each reports its own universe size |
-| Nightly integration | ✅ pipeline scans forward from the ID frontier within a 25-minute wall-clock budget and parses new reports; a separate bounded Sunday backfill walks older IDs |
+| Nightly integration | ✅ pipeline scans forward from the ID frontier within a 25-minute wall-clock budget and parses new reports; separate bounded Tue/Thu/Sun backfills walk older IDs |
 
 ## Upsides (why this is worth it)
 
@@ -110,10 +110,12 @@ production ([tefaslab/kap.py](../tefaslab/kap.py)).*
 
 - `python -m tefaslab holdings retry --count 50` requeues terminal errors
   after a parser or mapping fix, then attempts them once.
+- `python -m tefaslab holdings errors --count 100` lists terminal failures,
+  their retry count, and the retained reason for template triage.
 - `python -m tefaslab holdings alias ABC --title "KAP report title"` stores an
   explicit KAP-title → TEFAS-code mapping. Add `--note` to retain the
   verification rationale.
-- The scheduled Sunday backfill uses the same persisted DB and concurrency
+- The scheduled Tuesday/Thursday/Sunday backfills use the same persisted DB and concurrency
   lock as the daily job, so it cannot race the forward scanner or overwrite
   newer state.
 daily:  scan new ids ──▶ filter "Portföy Dağılım Raporu"
