@@ -79,13 +79,29 @@ Source: Yahoo Finance. `cpi`/`policy_rate` reserved for TCMB EVDS.*
 *Source: KAP "Portföy Dağılım Raporu" PDFs (see KAP_HOLDINGS.md).
 History accumulates forward from Apr-2026; coverage grows nightly.*
 
+### MKK provenance fields on fund_holdings
+
+| Column | Type | Description |
+|---|---|---|
+| source | TEXT | `kap-public` for legacy collection or `mkk-api` for the official indexed route |
+| attachment_id | TEXT | Official MKK attachment identifier when applicable |
+| attachment_sha256 | TEXT | SHA-256 of the downloaded source attachment |
+| parser_version | TEXT | Parser version that produced the row |
+| published_at | TEXT | Disclosure publication time supplied by MKK |
+
+### mkk_disclosures
+
+Official-MKK discovery ledger. The MKK `disclosure_index` is a separate key
+from KAP's public notification ID. It records fund code, subject, reporting
+period, published time, attachment metadata, status, attempts and errors.
+
 ### kap_disclosures
 Scanner ledger: one row per discovered portfolio-report disclosure
 (id, fund_title, year, period, obj_id, status found/parsed/error).
 
 ### kap_monthly_status
 
-Per-fund coverage ledger for the latest portfolio month whose 45-day
+Per-fund coverage ledger for the latest portfolio month whose 15-day
 publication grace has elapsed. `state` is one of `parsed`, `pending`, `error`,
 or `unseen`; `unseen` means no deterministic KAP link has been collected, not
 zero holdings or proven non-filing.

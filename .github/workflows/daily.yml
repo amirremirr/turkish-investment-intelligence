@@ -6,9 +6,10 @@ on:
     - cron: "30 15 * * 1-5"
     # 06:30 Istanbul Tue/Thu/Sun: bounded historical KAP holdings recovery.
     - cron: "30 3 * * 0,2,4"
-    # 11:30 Istanbul, days 15–20: collect the latest due monthly KAP books
-    # separately from the broader market-data refresh.
-    - cron: "30 8 15-20 * *"
+    # Four bounded MKK collection windows (06:30/11:30/16:30/21:30 Istanbul)
+    # during the disclosure window. The client persists its cursor and
+    # enforces MKK's six-calls-per-minute limit.
+    - cron: "30 3,8,13,18 1-15 * *"
   workflow_dispatch:
     inputs:
       mode:
@@ -27,6 +28,8 @@ jobs:
     timeout-minutes: 300
     env:
       EVDS_API_KEY: ${{ secrets.EVDS_API_KEY }}
+      MKK_USERNAME: ${{ secrets.MKK_USERNAME }}
+      MKK_PASSWORD: ${{ secrets.MKK_PASSWORD }}
       SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
       REQUIRE_SUPABASE_PUBLISH: "true"
       PYTHONIOENCODING: utf-8
@@ -108,7 +111,7 @@ jobs:
       - name: Collect latest due monthly KAP holdings
         if: >-
           github.event.inputs.mode == 'monthly' ||
-          github.event.schedule == '30 8 15-20 * *'
+          github.event.schedule == '30 3,8,13,18 1-15 * *'
         run: |
           test -f data/funds.db || {
             echo "::error::No database in cache — run mode=bootstrap first"; exit 1; }
@@ -126,7 +129,7 @@ jobs:
           github.event.inputs.mode != 'reparse' &&
           github.event.inputs.mode != 'backfill' &&
           github.event.schedule != '30 3 * * 0,2,4' &&
-          github.event.schedule != '30 8 15-20 * *'
+          github.event.schedule != '30 3,8,13,18 1-15 * *'
         run: |
           test -f data/funds.db || {
             echo "::error::No database in cache — run this workflow "\
@@ -140,7 +143,7 @@ jobs:
           github.event.inputs.mode != 'reparse' &&
           github.event.inputs.mode != 'backfill' &&
           github.event.schedule != '30 3 * * 0,2,4' &&
-          github.event.schedule != '30 8 15-20 * *'
+          github.event.schedule != '30 3,8,13,18 1-15 * *'
         run: |
           if [ "$(date +%d)" -le 03 ]; then
             python -m tefaslab report

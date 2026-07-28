@@ -453,11 +453,79 @@ def test_kap_monthly_status_tracks_due_month_without_claiming_zero(tmp_conn):
 def test_kap_due_month_respects_publication_grace_period():
     from tefaslab import kap
 
-    # May closes on May 31; its 45-day grace window closes on July 15.
-    assert kap.latest_due_period(date(2026, 7, 29)) == "2026-05"
-    # A date before that boundary must still point to the prior completed
-    # reporting month rather than calling the May disclosure late.
-    assert kap.latest_due_period(date(2026, 7, 14)) == "2026-04"
+    # KAP fund profiles commonly schedule reports in days 1–10. The 15-day
+    # operating grace means June is due by July 29, while on July 14 May is
+    # still the newest completed reporting month.
+    assert kap.latest_due_period(date(2026, 7, 29)) == "2026-06"
+    assert kap.latest_due_period(date(2026, 7, 14)) == "2026-05"
+
+
+def test_mkk_discovery_uses_checkpoint_and_subject_not_fund_type(tmp_conn):
+    from tefaslab import kap
+
+    class Client:
+        def last_disclosure_index(self):
+            return 101
+
+        def disclosures(self, cursor):
+            assert cursor == 52
+            return [
+                {"disclosureIndex": 100, "fundCode": "AAA", "fundId": "1",
+                 "title": "Alpha", "subReportIds": [], "acceptedDataFileTypes": ["data"]},
+                {"disclosureIndex": 101, "fundCode": "AAA", "fundId": "1",
+                 "title": "Alpha", "subReportIds": [], "acceptedDataFileTypes": ["data"]},
+            ]
+
+        def disclosure_detail(self, did):
+            if did == 101:
+                return {"subject": {"tr": "Portföy Dağılım Raporu"},
+                        "period": "01.06.2026 - 30.06.2026",
+                        "time": "03.07.2026 10:00:00",
+                        "attachmentUrls": [{"url": "https://x/downloadAttachment/a"}]}
+            return {"subject": {"tr": "İhraç Belgesi"}, "attachmentUrls": []}
+
+    tmp_conn.executescript(kap.SCHEMA)
+    tmp_conn.execute("INSERT INTO funds VALUES ('AAA', 'Alpha', 'YAT', 'Equity Turkey')")
+    out = kap.discover_mkk_disclosures(tmp_conn, batches=1, detail_limit=2,
+                                       client=Client())
+    assert out["listed"] == 2 and out["portfolio_reports"] == 1
+    report = tmp_conn.execute(
+        "SELECT status, reporting_period FROM mkk_disclosures WHERE disclosure_index=101"
+    ).fetchone()
+    assert report == ("found", "2026-06")
+    assert tmp_conn.execute("SELECT cursor FROM mkk_scan_state WHERE id=1").fetchone()[0] == 102
+
+
+def test_mkk_parse_replaces_monthly_snapshot_and_records_provenance(tmp_conn, monkeypatch):
+    from tefaslab import kap
+
+    class Client:
+        def download_attachment(self, url):
+            assert url.endswith("attachment-1")
+            return b"prefix%PDF mock"
+
+    tmp_conn.executescript(kap.SCHEMA)
+    tmp_conn.execute("INSERT INTO funds VALUES ('AAA', 'Alpha', 'YAT', 'Equity Turkey')")
+    tmp_conn.execute("INSERT INTO fund_holdings(code, period, isin) VALUES "
+                     "('AAA', '2026-06', 'OLD')")
+    tmp_conn.execute(
+        "INSERT INTO mkk_disclosures(disclosure_index, fund_code, reporting_period, "
+        "published_at, attachment_urls, status, checked_at) VALUES (?,?,?,?,?,?,?)",
+        (99, "AAA", "2026-06", "03.07.2026 10:00:00",
+         '[{"url": "https://x/downloadAttachment/attachment-1"}]', "found", "now"),
+    )
+    monkeypatch.setattr(kap, "parse_pdf_holdings", lambda _: ("AAA", [{
+        "isin": "TR0000000001", "ticker": "AAA", "name": "Alpha", "quantity": 1,
+        "value": 2, "weight_pct": 3,
+    }]))
+    out = kap.parse_mkk_pending(tmp_conn, limit=1, client=Client())
+    assert out == {"parsed": 1, "errors": 0}
+    rows = tmp_conn.execute(
+        "SELECT isin, source, attachment_id, attachment_sha256, parser_version "
+        "FROM fund_holdings WHERE code='AAA' AND period='2026-06'").fetchall()
+    assert len(rows) == 1 and rows[0][0] == "TR0000000001"
+    assert rows[0][1] == "mkk-api" and rows[0][2] == "attachment-1"
+    assert len(rows[0][3]) == 64 and rows[0][4] == kap.MKK_PARSER_VERSION
 
 
 def test_kap_title_resolution_is_normalised_but_never_fuzzy(tmp_conn):

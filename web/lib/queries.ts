@@ -364,7 +364,7 @@ export async function getDataStatus(): Promise<{
         asOf: monthlyHold?.period ?? null,
         served: !!monthlyHold,
         note: monthlyHold
-          ? "The due month is assessed only after a 45-day publication grace period. Unseen means the crawler has not deterministically linked a KAP disclosure; it is not a zero holding and does not prove the manager did not file."
+          ? "The due month is assessed after a 15-day operating grace. MKK's official index is the primary discovery route; unseen means no deterministic report has been collected, not a zero holding or proof of non-filing."
           : "The first dedicated monthly KAP collection run will publish this per-fund ledger. Until then, all-history holdings coverage must not be read as current-month coverage.",
       },
       {

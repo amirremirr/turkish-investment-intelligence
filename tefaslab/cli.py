@@ -241,6 +241,19 @@ def cmd_holdings(args) -> None:
         # calling pipeline.update_raw(), so persist its SLA result explicitly.
         pipeline._status(conn, "kap_monthly_coverage", out["monthly_coverage"])
         print(out)
+    elif args.action == "mkk-sync":
+        print(kap.sync_mkk_funds(conn))
+    elif args.action == "mkk":
+        # Keep an interactive MKK probe bounded even when the generic
+        # holdings --count default is used; the provider permits 6 calls/min.
+        from . import mkk
+        client = mkk.MKKClient()
+        out = kap.discover_mkk_disclosures(
+            conn, batches=min(args.count, 12), detail_limit=args.details,
+            client=client)
+        out["parse"] = kap.parse_mkk_pending(
+            conn, limit=args.parse_limit, client=client)
+        print(out)
     elif args.action == "reparse":
         out = kap.reparse(conn, limit=args.count)
         print(out)
@@ -593,12 +606,16 @@ def main() -> None:
 
     p = sub.add_parser("holdings", help="KAP fund holdings pipeline")
     p.add_argument("action", choices=["scan", "parse", "reparse", "retry", "alias", "errors",
-                                      "backfill", "monthly", "who", "fund", "stats",
+                                      "backfill", "monthly", "mkk", "mkk-sync", "who", "fund", "stats",
                                       "crowding", "active", "attrib"])
     p.add_argument("arg", nargs="?", help="ticker (who) / fund code (fund)")
     p.add_argument("--start", type=int, help="scan start id")
     p.add_argument("--count", type=int, default=100)
     p.add_argument("--period", help="portfolio period YYYY-MM (monthly action)")
+    p.add_argument("--details", type=int, default=30,
+                   help="MKK disclosure-detail requests (quota-limited)")
+    p.add_argument("--parse-limit", type=int, default=4,
+                   help="MKK report attachments to parse")
     p.add_argument("--title", help="KAP title for the operator-reviewed alias action")
     p.add_argument("--note", help="optional rationale recorded with a KAP title alias")
     p.set_defaults(func=cmd_holdings)

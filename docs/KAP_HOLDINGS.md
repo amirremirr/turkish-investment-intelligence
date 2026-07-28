@@ -13,12 +13,28 @@ production ([tefaslab/kap.py](../tefaslab/kap.py)).*
 | Table parser (`parse_pdf_holdings`) | ✅ working — position-based row reconstruction; on the test fund: 89/89 holdings, 0 missing values, **weights sum to 98.1%** (rest is cash) |
 | `fund_holdings` table + `kap_disclosures` ledger | ✅ in the shared DB |
 | Coverage audit | ✅ classifies every fund as parsed, linked-pending, parser-error, or no resolved KAP report; shown on the public data-status page |
-| Monthly disclosure SLA | ✅ per-fund ledger for the latest due month: parsed, pending, parser error, or unseen; a 45-day publication grace applies |
+| Monthly disclosure SLA | ✅ per-fund ledger for the latest due month: parsed, pending, parser error, or unseen; a 15-day operating grace applies |
 | Recovery queue | ✅ transient downloads retry up to three times; legacy failures receive one controlled retry; terminal parser errors retain their reason |
 | Title resolution | ✅ PDF code, exact title, unique normalised title, and operator-reviewed aliases; never fuzzy-matched |
 | Queries: `holdings who ASELS`, `holdings fund IJZ`, `holdings stats` | ✅ CLI |
 | Analytics: `crowding` (breadth of ownership), `active` (peer active share), `attrib` (stock-level contribution) | ✅ [ownership.py](../tefaslab/ownership.py) — each reports its own universe size |
 | Nightly integration | ✅ pipeline scans forward from the ID frontier within a 25-minute wall-clock budget and parses new reports; separate bounded Tue/Thu/Sun backfills walk older IDs |
+
+## Official MKK discovery
+
+The official MKK API is now the production discovery route for monthly
+holdings. It stores a persistent disclosure-index checkpoint and spaces calls
+10.5 seconds apart to stay inside the six-calls-per-minute product limit. Its
+disclosure index is stored separately from public KAP notification IDs; those
+identifiers must never be assumed interchangeable.
+
+The MKK detail record supplies the fund code, subject, reporting period,
+publication time and attachment references. The attachment remains the source
+document: structured `flatData` is inspected when present but never assumed.
+Every parsed MKK snapshot records its source, attachment ID, SHA-256, parser
+version and publication time. A newer report for the same fund/month replaces
+the complete prior snapshot, so corrections cannot leave deleted positions in
+the product. Durable raw-file object storage is the remaining provenance step.
 
 ## Upsides (why this is worth it)
 
