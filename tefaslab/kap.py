@@ -618,6 +618,7 @@ def sync_mkk_funds(conn: sqlite3.Connection, client: mkk.MKKClient | None = None
         rows,
     )
     conn.commit()
+    return {"funds": len(rows)}
 
 
 def set_holdings_scope(conn: sqlite3.Connection, code: str, eligibility: str,
@@ -639,7 +640,6 @@ def set_holdings_scope(conn: sqlite3.Connection, code: str, eligibility: str,
         (code.upper(), eligibility, reason.strip(), evidence_url, datetime_now_iso()),
     )
     conn.commit()
-    return {"funds": len(rows)}
 
 
 def _mkk_scan_cursor(conn: sqlite3.Connection, latest: int) -> int:
