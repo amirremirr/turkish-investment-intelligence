@@ -6,7 +6,7 @@ on:
     - cron: "30 15 * * 1-5"
     # 06:30 Istanbul Tue/Thu/Sun: bounded historical KAP holdings recovery.
     - cron: "30 3 * * 0,2,4"
-    # One 60–90 minute MKK recovery job at 11:30 Istanbul during the filing
+    # One ~75-minute MKK recovery job at 11:30 Istanbul during the filing
     # window. It walks backward through a distinct slice each day and the
     # client enforces the provider's six-calls-per-minute limit.
     - cron: "30 8 1-15 * *"

@@ -39,7 +39,7 @@ the complete prior snapshot, so corrections cannot leave deleted positions in
 the product. Durable raw-file object storage is the remaining provenance step.
 
 The monthly job runs once daily on calendar days 1â€“15, for roughly 60â€“90
-minutes. It has capacity for about 120 parsed reports per run and preserves
+minutes. It has capacity for about 150 parsed reports per run and preserves
 the uncompleted range for the next run. Coverage is measured among active
 TEFAS mutual funds expected to report; a fund can be marked `unknown` or
 `exempt` only through an operator-reviewed record with a reason and optional
