@@ -152,12 +152,28 @@ def test_fund_factor_model_returns_alpha_t(tmp_conn):
     out = factors.fund_factor_model(tmp_conn, "AAA")
     assert "alpha_t" in out
     assert out["alpha_t"] is None or isinstance(out["alpha_t"], float)
+    assert set(out["residual_diagnostics"]) == {
+        "jb", "jb_p", "durbin_watson", "bp_lm"
+    }
+
+
+def test_factor_residual_diagnostics_are_finite_for_regular_residuals():
+    from tefaslab import factors
+
+    rng = np.random.default_rng(12)
+    x = rng.normal(size=240)
+    resid = rng.normal(scale=0.3, size=240)
+    out = factors.residual_diagnostics(resid, np.column_stack([np.ones(len(x)), x]))
+    assert out["jb"] >= 0
+    assert 0 <= out["jb_p"] <= 1
+    assert 0.5 < out["durbin_watson"] < 3.5
+    assert out["bp_lm"] >= 0
 
 
 def _memo_with_factor(monkeypatch, tmp_conn, fdict):
     """Render a memo with a controlled factor-model result."""
     import pandas as pd
-    from tefaslab import memo, factors
+    from tefaslab import memo, factors, rigor
     tmp_conn.execute("INSERT OR IGNORE INTO funds VALUES "
                      "('AAA','TEST FON','YAT','Equity Turkey')")
     tmp_conn.executemany(
@@ -172,6 +188,8 @@ def _memo_with_factor(monkeypatch, tmp_conn, fdict):
     }], index=["AAA"])
     monkeypatch.setattr(factors, "fund_factor_model",
                         lambda conn, code, **kw: fdict)
+    monkeypatch.setattr(rigor, "_cash_daily",
+                        lambda conn: pd.Series(dtype=float))
     return memo.generate_memo(tmp_conn, "AAA", rf=0.4, table=table)
 
 
@@ -180,25 +198,44 @@ _BASE_F = {"alpha_annual": 0.5, "r_squared": 0.5, "unexplained_return": 0,
                        "usdtry": {"beta": 0.0}, "nasdaq_try": {"beta": 0.0}}}
 
 
-def test_memo_gates_insignificant_alpha(monkeypatch, tmp_conn):
+def test_memo_marks_insignificant_alpha_non_citable(monkeypatch, tmp_conn):
     text = _memo_with_factor(monkeypatch, tmp_conn,
                              {**_BASE_F, "alpha_t": 0.5})
-    assert "not statistically significant" in text
+    assert "No individual factor-model alpha is citable" in text
     assert "Positive factor-adjusted performance" not in text
 
 
-def test_memo_praises_significant_alpha(monkeypatch, tmp_conn):
+def test_memo_does_not_promote_nominally_significant_alpha(monkeypatch, tmp_conn):
     text = _memo_with_factor(monkeypatch, tmp_conn,
                              {**_BASE_F, "alpha_t": 3.2})
-    assert "Positive factor-adjusted performance" in text
-    assert "t = 3.2" in text
+    assert "No individual factor-model alpha is citable" in text
+    assert "Positive factor-adjusted performance" not in text
 
 
-def test_memo_flags_significant_negative_alpha(monkeypatch, tmp_conn):
+def test_memo_does_not_promote_individual_negative_alpha_claim(monkeypatch, tmp_conn):
     text = _memo_with_factor(
         monkeypatch, tmp_conn,
         {**_BASE_F, "alpha_annual": -0.3, "alpha_t": -3.0})
-    assert "Significantly negative factor-adjusted" in text
+    assert "No individual factor-model alpha is citable" in text
+    assert "Significantly negative factor-adjusted" not in text
+
+
+def test_skill_score_defaults_to_within_category_percentiles(tmp_conn):
+    import pandas as pd
+    from tefaslab import quality
+
+    components = pd.DataFrame({
+        "title": ["A1", "A2", "B1", "B2"],
+        "category": ["A", "A", "B", "B"],
+        "ret_1y": [0.1] * 4, "sharpe": [1.0] * 4,
+        "max_dd": [-0.1] * 4, "alpha_annual": [0.0] * 4,
+        "alpha_t": [1.0, 2.0, 10.0, 20.0],
+        "consistency": [0.5] * 4, "r_squared": [0.5] * 4,
+        "aum": [1e9] * 4,
+    }, index=["A1", "A2", "B1", "B2"])
+    out = quality.skill_scores(tmp_conn, components=components)
+    assert out.loc["A1", "skill_score"] == out.loc["B1", "skill_score"]
+    assert out.loc["A2", "skill_score"] == out.loc["B2", "skill_score"]
 
 
 # -------------------------------------------- TEFAS contract check
@@ -480,6 +517,25 @@ def test_source_check_unexpected_error_is_down():
     def boom():
         raise RuntimeError("kaboom")
     assert sc._run(boom) == (sc.DOWN, "unexpected RuntimeError: kaboom")
+
+
+def test_source_check_yahoo_rate_limit_is_a_warning(monkeypatch):
+    from tefaslab import benchmarks
+
+    class Response:
+        status_code = 429
+
+    monkeypatch.setattr(benchmarks, "_closes", lambda *_: [])
+    monkeypatch.setattr(sc.requests, "get", lambda *_, **__: Response())
+    status, detail = sc.check_yahoo()
+    assert status == sc.WARN
+    assert "rate-limited" in detail
+
+
+def test_source_check_warn_does_not_page(monkeypatch):
+    monkeypatch.setattr(sc.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(sc, "CHECKS", [("Yahoo", lambda: (sc.WARN, "429"))])
+    assert sc.main() == 0
 
 
 # ------------------------------------------------- statistical rigor

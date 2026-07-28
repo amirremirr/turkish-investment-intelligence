@@ -88,8 +88,8 @@ Scanner ledger: one row per discovered portfolio-report disclosure
 | Table | Purpose | Built from |
 |---|---|---|
 | dash_metrics | per-fund returns/risk/beta/excess + meta | prices, benchmarks, funds |
-| dash_betas | 4-factor betas, alpha, **alpha t-stat**, R² per fund | prices, benchmarks |
-| dash_quality | Manager Skill + Investor Suitability scores | metrics, betas, flows |
+| dash_betas | Cash-adjusted, reset-clipped 4-factor betas, alpha t-stat, residual diagnostics and R² per fund | prices, benchmarks, EVDS deposit rate |
+| dash_quality | Category-relative research and suitability scores; not a manager-skill verdict or recommendation | metrics, betas, flows |
 | dash_cat_flows | 30-day net flow per category | prices (Δshares×NAV), funds |
 | dash_rotation | month-end AUM share per category | prices, funds |
 | dash_closet_summary / _detail | closet-index classification | betas |

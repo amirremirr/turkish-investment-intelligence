@@ -207,6 +207,19 @@ export async function getDataStatus(): Promise<{
     };
   }, { f: 0, p: 0, mp: "", w: 0 });
 
+  const kapHealth = await one(async () => {
+    const r = await sql`SELECT
+      COUNT(*) FILTER (WHERE status = 'parsed') AS parsed,
+      COUNT(*) FILTER (WHERE status = 'error') AS errors,
+      COUNT(*) FILTER (WHERE status = 'found') AS pending
+      FROM kap_disclosures`;
+    return {
+      parsed: Number(r[0].parsed),
+      errors: Number(r[0].errors),
+      pending: Number(r[0].pending),
+    };
+  }, { parsed: 0, errors: 0, pending: 0 });
+
   const cpi = await one(async () => {
     const r = await sql`SELECT MAX(date) AS d FROM benchmarks
       WHERE series = 'cpi_index'`;
@@ -252,7 +265,7 @@ export async function getDataStatus(): Promise<{
         coverage: `${hold.f} funds · ${hold.w} with weights · ${hold.p} period${hold.p === 1 ? "" : "s"}`,
         asOf: hold.mp || null,
         served: hold.f > 0,
-        note: "Parsed from monthly KAP portfolio PDFs. This is the thinnest dataset here: coverage is forward-only and currently a small slice of the ~2,400-fund universe, so most fund pages have no book yet.",
+        note: `Parsed from monthly KAP portfolio PDFs. ${intFmt(kapHealth.parsed)} reports parsed, ${intFmt(kapHealth.errors)} parser errors, and ${intFmt(kapHealth.pending)} pending. This is the thinnest dataset here: coverage is forward-only and currently a small slice of the ~2,400-fund universe, so most fund pages have no book yet.`,
       },
       {
         name: "Asset-class allocations",
@@ -260,6 +273,13 @@ export async function getDataStatus(): Promise<{
         asOf: null,
         served: allocServed,
         note: "Daily equity/bond/cash/FX weights exist for ~2,400 funds in the warehouse but are not served to this site yet — which is why fund pages show no composition breakdown.",
+      },
+      {
+        name: "Fund fees",
+        coverage: "not yet collected",
+        asOf: null,
+        served: false,
+        note: "Alpha, closet-index and active-value research is gross of fees until a dated fee source is added. Do not read these metrics as an investor's net return.",
       },
       {
         name: "Macro (CPI, policy & deposit rates)",
