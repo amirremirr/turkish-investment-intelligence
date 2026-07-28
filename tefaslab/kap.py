@@ -765,6 +765,19 @@ def refresh_monthly_status(conn: sqlite3.Connection, period: str | None = None,
         if code not in reports or status in ("found", "retry"):
             reports[code] = (int(did), str(status))
 
+    # The official MKK route uses a different disclosure-index namespace from
+    # KAP's public notification pages, but it represents the same coverage
+    # state. Include discovered MKK reports here so a verified report waiting
+    # for its attachment parser is honestly shown as `pending`, never
+    # `unseen`. The current UI does not construct a link from disclosure_id.
+    for code, did, status in conn.execute(
+        "SELECT fund_code, disclosure_index, status FROM mkk_disclosures "
+        "WHERE reporting_period=? AND status IN ('found', 'parsed', 'error') "
+        "ORDER BY disclosure_index DESC", (period,)):
+        mapped = "found" if status == "found" else str(status)
+        if code not in reports or mapped == "found":
+            reports[str(code)] = (int(did), mapped)
+
     now = datetime_now_iso()
     rows = []
     for code in eligible:

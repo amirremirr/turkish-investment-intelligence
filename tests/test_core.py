@@ -493,6 +493,8 @@ def test_mkk_discovery_uses_checkpoint_and_subject_not_fund_type(tmp_conn):
         "SELECT status, reporting_period FROM mkk_disclosures WHERE disclosure_index=101"
     ).fetchone()
     assert report == ("found", "2026-06")
+    monthly = kap.refresh_monthly_status(tmp_conn, "2026-06")
+    assert monthly["pending_funds"] == 1 and monthly["unseen_funds"] == 0
     assert tmp_conn.execute("SELECT cursor FROM mkk_scan_state WHERE id=1").fetchone()[0] == 102
 
 
