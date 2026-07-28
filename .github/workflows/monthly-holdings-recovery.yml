@@ -8,6 +8,10 @@ on:
         type: choice
         options: ["4", "3", "2", "1"]
         default: "4"
+      reset_mkk_cursor:
+        description: "Reset the reviewed period cursor before pass 1"
+        type: boolean
+        default: true
 
 # Share the stateful SQLite cache with the normal pipeline. A workflow-level
 # group makes the recovery wait for any daily run, then lets its two jobs run
@@ -49,13 +53,12 @@ jobs:
           test -n "$SUPABASE_DB_URL" || { echo "::error::SUPABASE_DB_URL is required"; exit 1; }
           test -n "$MKK_USERNAME" && test -n "$MKK_PASSWORD" || {
             echo "::error::MKK_USERNAME and MKK_PASSWORD are required"; exit 1; }
-      - name: Collect four bounded monthly windows
+      - name: Collect paced monthly recovery windows
         run: |
-          for i in $(seq 1 ${{ inputs.cycles_per_pass }}); do
-            echo "::group::MKK monthly recovery cycle $i / ${{ inputs.cycles_per_pass }}"
-            python -m tefaslab holdings monthly --count 5000
-            echo "::endgroup::"
-          done
+          RESET=""
+          if [ "${{ inputs.reset_mkk_cursor }}" = "true" ]; then RESET="--reset-mkk"; fi
+          python -m tefaslab holdings monthly --count 5000 --batches 50 --details 220 --parse-limit 150 \
+            --cycles ${{ inputs.cycles_per_pass }} $RESET
           python -m tefaslab holdings stats
           python -m tefaslab daily --skip-raw
       - name: Save database for pass 2
@@ -88,13 +91,10 @@ jobs:
           test -n "$SUPABASE_DB_URL" || { echo "::error::SUPABASE_DB_URL is required"; exit 1; }
           test -n "$MKK_USERNAME" && test -n "$MKK_PASSWORD" || {
             echo "::error::MKK_USERNAME and MKK_PASSWORD are required"; exit 1; }
-      - name: Continue four bounded monthly windows
+      - name: Continue paced monthly recovery windows
         run: |
-          for i in $(seq 1 ${{ inputs.cycles_per_pass }}); do
-            echo "::group::MKK monthly recovery cycle $i / ${{ inputs.cycles_per_pass }}"
-            python -m tefaslab holdings monthly --count 5000
-            echo "::endgroup::"
-          done
+          python -m tefaslab holdings monthly --count 5000 --batches 50 --details 220 --parse-limit 150 \
+            --cycles ${{ inputs.cycles_per_pass }}
           python -m tefaslab holdings stats
           python -m tefaslab daily --skip-raw
       - name: Save final database

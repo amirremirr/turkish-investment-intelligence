@@ -528,6 +528,89 @@ def test_mkk_monthly_collector_walks_backward_not_only_latest_page(tmp_conn):
     assert tmp_conn.execute("SELECT COUNT(*) FROM mkk_disclosures").fetchone()[0] == 150
 
 
+def test_mkk_monthly_empty_page_does_not_mark_period_exhausted(tmp_conn):
+    from tefaslab import kap
+
+    class Client:
+        def last_disclosure_index(self):
+            return 250
+
+        def disclosures(self, start):
+            if start == 201:
+                return [
+                    {"disclosureIndex": did, "fundCode": "AAA", "fundId": "1",
+                     "title": "Alpha", "subReportIds": [], "acceptedDataFileTypes": []}
+                    for did in range(201, 251)
+                ]
+            assert start == 151
+            return []
+
+    tmp_conn.executescript(kap.SCHEMA)
+    tmp_conn.execute("INSERT INTO funds VALUES ('AAA', 'Alpha', 'YAT', 'Equity Turkey')")
+    out = kap.discover_mkk_monthly(tmp_conn, "2026-06", batches=2,
+                                   detail_limit=0, client=Client())
+    assert out["empty_pages"] == 1
+    assert out["exhausted"] is False
+    assert out["cursor"] == 151
+    assert tmp_conn.execute(
+        "SELECT exhausted FROM mkk_monthly_scan_state WHERE period='2026-06'"
+    ).fetchone()[0] == 0
+
+
+def test_mkk_classifier_handles_turkish_dotless_i():
+    from tefaslab import kap
+
+    assert kap._mkk_is_portfolio_report({}, {
+        "subject": {"tr": "Portf\u00f6y Da\u011f\u0131l\u0131m Raporu"},
+    })
+
+
+def test_mkk_fund_sync_uses_fresh_checkpoint(tmp_conn):
+    from tefaslab import kap
+
+    class Client:
+        def funds(self):
+            raise AssertionError("fresh registry must not be fetched again")
+
+    tmp_conn.executescript(kap.SCHEMA)
+    tmp_conn.execute(
+        "INSERT INTO mkk_funds(code, fetched_at) VALUES (?,?)",
+        ("AAA", kap.datetime_now_iso()),
+    )
+    assert kap.sync_mkk_funds(tmp_conn, client=Client()) == {"funds": 1, "cached": True}
+
+
+def test_mkk_client_retries_rate_limit_with_cooldown():
+    from tefaslab.mkk import MKKClient
+
+    class Response:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self.headers = {"Retry-After": "12"}
+            self._payload = payload
+            self.content = b""
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"HTTP {self.status_code}")
+
+        def json(self):
+            return self._payload
+
+    class Session:
+        def __init__(self):
+            self.responses = [Response(429, {}), Response(200, [])]
+
+        def get(self, *args, **kwargs):
+            return self.responses.pop(0)
+
+    sleeps = []
+    client = MKKClient("user", "secret", session=Session(), min_interval=0,
+                       clock=lambda: 0, sleep=sleeps.append)
+    assert client.funds() == []
+    assert sleeps == [12.0]
+
+
 def test_mkk_parse_replaces_monthly_snapshot_and_records_provenance(tmp_conn, monkeypatch):
     from tefaslab import kap
 

@@ -25,6 +25,10 @@ BASE_URL = "https://apigwdev.mkk.com.tr/api/vyk"
 # The supplied product quota is six calls per minute.  Leave a little room
 # rather than running exactly on the boundary and receiving intermittent 429s.
 MIN_REQUEST_INTERVAL_SECONDS = 10.5
+# A 429 is a normal signal from a quota-limited upstream, not a reason to
+# discard a month's scan checkpoint.  Retry a small, bounded number of times
+# and honour a server-provided delay when available.
+MAX_RATE_LIMIT_RETRIES = 4
 
 
 class MKKConfigurationError(RuntimeError):
@@ -54,22 +58,41 @@ class MKKClient:
         self.sleep = sleep
         self._last_request_at: float | None = None
 
+    @staticmethod
+    def _retry_after_seconds(response: requests.Response) -> float:
+        """Return a conservative delay for an upstream 429 response."""
+        raw = response.headers.get("Retry-After")
+        try:
+            return max(MIN_REQUEST_INTERVAL_SECONDS, float(raw)) if raw else 30.0
+        except (TypeError, ValueError):
+            return 30.0
+
     def _request(self, path: str, *, params: dict[str, str] | None = None,
                  timeout: int = 30, binary: bool = False) -> Any:
-        if self._last_request_at is not None:
-            wait = self.min_interval - (self.clock() - self._last_request_at)
-            if wait > 0:
-                self.sleep(wait)
-        response = self.session.get(
-            f"{BASE_URL}{path}",
-            auth=HTTPBasicAuth(self.username, self.password),
-            headers={"Accept": "application/json"} if not binary else {},
-            params=params,
-            timeout=timeout,
-        )
-        self._last_request_at = self.clock()
-        response.raise_for_status()
-        return response.content if binary else response.json()
+        for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
+            if self._last_request_at is not None:
+                wait = self.min_interval - (self.clock() - self._last_request_at)
+                if wait > 0:
+                    self.sleep(wait)
+            response = self.session.get(
+                f"{BASE_URL}{path}",
+                auth=HTTPBasicAuth(self.username, self.password),
+                headers={"Accept": "application/json"} if not binary else {},
+                params=params,
+                timeout=timeout,
+            )
+            self._last_request_at = self.clock()
+            if response.status_code != 429 or attempt == MAX_RATE_LIMIT_RETRIES:
+                response.raise_for_status()
+                return response.content if binary else response.json()
+
+            # Start the next attempt after the provider's cooldown. Clearing
+            # the per-client timestamp avoids assuming an injected test clock
+            # advanced while the injected sleeper ran.
+            self.sleep(self._retry_after_seconds(response))
+            self._last_request_at = None
+
+        raise AssertionError("unreachable")
 
     def funds(self) -> list[dict[str, Any]]:
         data = self._request("/funds", timeout=60)

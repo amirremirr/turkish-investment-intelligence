@@ -22,7 +22,7 @@ import sqlite3
 import time
 import unicodedata
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pdfplumber
 import requests
@@ -545,6 +545,7 @@ def coverage_summary(conn: sqlite3.Connection) -> dict:
 
 MKK_BATCH_SIZE = 50
 MKK_PARSER_VERSION = "mkk-pdf-v1"
+MKK_FUND_REGISTRY_MAX_AGE = timedelta(hours=24)
 
 
 def _mkk_period(value: object) -> str | None:
@@ -585,17 +586,32 @@ def _mkk_is_portfolio_report(summary: dict, detail: dict) -> bool:
         str(detail.get("disclosureReason") or ""),
         " ".join(str(x) for x in summary.get("subReportIds") or []),
     ])
-    folded = unicodedata.normalize("NFKD", text.casefold().replace("ı", "i"))
-    folded = "".join(ch for ch in folded if ch.isascii())
-    return any(token in folded for token in (
+    # ``NFKD`` removes accents such as ö, but Turkish dotless i does not
+    # decompose. Unicode escapes keep this independent of source encoding.
+    normalized = unicodedata.normalize("NFKD", text.casefold().translate(str.maketrans({
+        "\u0131": "i", "\u015f": "s", "\u011f": "g", "\u00e7": "c",
+        "\u00fc": "u", "\u00f6": "o",
+    })))
+    normalized = "".join(ch for ch in normalized if ch.isascii())
+    return any(token in normalized for token in (
         "portfoy dagilim raporu", "portfolio distribution report",
         "portfolio distribution",
     ))
-
-
-def sync_mkk_funds(conn: sqlite3.Connection, client: mkk.MKKClient | None = None) -> dict:
+def sync_mkk_funds(conn: sqlite3.Connection, client: mkk.MKKClient | None = None,
+                   force: bool = False) -> dict:
     """Checkpoint the official MKK fund registry without changing TEFAS data."""
     _ensure_schema(conn)
+    existing = conn.execute(
+        "SELECT COUNT(*), MAX(fetched_at) FROM mkk_funds"
+    ).fetchone()
+    if not force and existing and existing[0] and existing[1]:
+        try:
+            age = datetime.now() - datetime.fromisoformat(str(existing[1]))
+            if age <= MKK_FUND_REGISTRY_MAX_AGE:
+                return {"funds": int(existing[0]), "cached": True}
+        except ValueError:
+            # A legacy timestamp must not prevent a refresh.
+            pass
     client = client or mkk.MKKClient()
     now = datetime_now_iso()
     rows = []
@@ -618,7 +634,7 @@ def sync_mkk_funds(conn: sqlite3.Connection, client: mkk.MKKClient | None = None
         rows,
     )
     conn.commit()
-    return {"funds": len(rows)}
+    return {"funds": len(rows), "cached": False}
 
 
 def set_holdings_scope(conn: sqlite3.Connection, code: str, eligibility: str,
@@ -764,6 +780,22 @@ def _set_mkk_monthly_cursor(conn: sqlite3.Connection, period: str, cursor: int,
     conn.commit()
 
 
+def reset_mkk_monthly_scan(conn: sqlite3.Connection, period: str) -> None:
+    """Reset one reviewed period's MKK checkpoint and classifier queue.
+
+    This is intentionally period-scoped: it recovers from the old collector
+    which mistook an empty page for complete history without discarding any
+    holdings data or broad database state.
+    """
+    _ensure_schema(conn)
+    conn.execute("DELETE FROM mkk_monthly_scan_state WHERE period=?", (period,))
+    conn.execute(
+        "UPDATE mkk_disclosures SET status='indexed', last_error=NULL, checked_at=? "
+        "WHERE status='ignored'", (datetime_now_iso(),)
+    )
+    conn.commit()
+
+
 def discover_mkk_monthly(conn: sqlite3.Connection, period: str, batches: int = 50,
                          detail_limit: int = 180,
                          client: mkk.MKKClient | None = None) -> dict:
@@ -801,7 +833,7 @@ def discover_mkk_monthly(conn: sqlite3.Connection, period: str, batches: int = 5
         live_cursor = latest + 1
         exhausted = False
 
-    listed = 0
+    listed = empty_pages = short_pages = 0
     pages_left = batches
 
     def store_batch(batch: list[dict]) -> list[int]:
@@ -837,7 +869,10 @@ def discover_mkk_monthly(conn: sqlite3.Connection, period: str, batches: int = 5
     while pages_left and live_cursor <= latest:
         batch = client.disclosures(live_cursor)
         if not batch:
-            live_cursor = latest + 1
+            # An empty response can be a transient gateway/rate-limit edge,
+            # not evidence that every newer notice was scanned. Leave the
+            # checkpoint intact for the next bounded run.
+            empty_pages += 1
             break
         ids = store_batch(batch)
         live_cursor = max(ids) + 1
@@ -854,11 +889,16 @@ def discover_mkk_monthly(conn: sqlite3.Connection, period: str, batches: int = 5
             break
         batch = client.disclosures(cursor)
         if not batch:
-            exhausted = True
+            # Do not poison the durable cursor on an empty page. The previous
+            # implementation marked the whole period exhausted here.
+            empty_pages += 1
             break
         ids = store_batch(batch)
         cursor = min(ids) - MKK_BATCH_SIZE
         if len(ids) < MKK_BATCH_SIZE:
+            short_pages += 1
+        if cursor < 1:
+            cursor = 1
             exhausted = True
             break
     head_index = max(head_index, latest)
@@ -912,7 +952,8 @@ def discover_mkk_monthly(conn: sqlite3.Connection, period: str, batches: int = 5
             "cursor": max(1, cursor), "live_cursor": live_cursor,
             "exhausted": exhausted, "listed": listed,
             "inspected": inspected, "portfolio_reports": found,
-            "deferred": deferred, "ignored": ignored, "errors": errors}
+            "deferred": deferred, "ignored": ignored, "errors": errors,
+            "empty_pages": empty_pages, "short_pages": short_pages}
 
 
 # ------------------------------------------------------ monthly coverage
@@ -1281,7 +1322,8 @@ def daily_update(conn: sqlite3.Connection, max_ids: int = 5000) -> dict:
 def collect_monthly(conn: sqlite3.Connection, period: str | None = None,
                     max_ids: int = 5000, mkk_batches: int = 50,
                     mkk_detail_limit: int = 220,
-                    mkk_parse_limit: int = 150) -> dict:
+                    mkk_parse_limit: int = 150,
+                    client: mkk.MKKClient | None = None) -> dict:
     """Collect the latest monthly books through the official MKK index.
 
     The client spaces calls 10.5 seconds apart, respecting the product quota.
@@ -1293,7 +1335,7 @@ def collect_monthly(conn: sqlite3.Connection, period: str | None = None,
     # until the separate 15-day grace closes.
     period = period or latest_collection_period()
     try:
-        client = mkk.MKKClient()
+        client = client or mkk.MKKClient()
         out: dict = {}
         out["mkk_funds"] = sync_mkk_funds(conn, client=client)
         out["mkk"] = discover_mkk_monthly(

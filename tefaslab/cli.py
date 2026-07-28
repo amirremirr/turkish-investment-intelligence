@@ -236,7 +236,26 @@ def cmd_holdings(args) -> None:
         out = kap.scan_backward(conn, budget=args.count)
         print(out)
     elif args.action == "monthly":
-        out = kap.collect_monthly(conn, period=args.period, max_ids=args.count)
+        if args.cycles < 1:
+            raise ValueError("--cycles must be at least 1")
+        client = None
+        # Keep all recovery cycles in one process so MKK's 10.5-second pacing
+        # applies across the complete window, not just within each CLI call.
+        if args.cycles > 1:
+            from . import mkk
+            client = mkk.MKKClient()
+        if args.reset_mkk:
+            kap.reset_mkk_monthly_scan(conn, args.period or kap.latest_collection_period())
+        for cycle in range(args.cycles):
+            out = kap.collect_monthly(
+                conn, period=args.period, max_ids=args.count,
+                mkk_batches=args.batches or 50,
+                mkk_detail_limit=args.details or 220,
+                mkk_parse_limit=args.parse_limit or 150,
+                client=client,
+            )
+            if args.cycles > 1:
+                print(f"monthly recovery cycle {cycle + 1}/{args.cycles}: {out['mkk']}")
         # The dedicated workflow rebuilds/publishes presentation data without
         # calling pipeline.update_raw(), so persist its SLA result explicitly.
         pipeline._status(conn, "kap_monthly_coverage", out["monthly_coverage"])
@@ -249,10 +268,10 @@ def cmd_holdings(args) -> None:
         from . import mkk
         client = mkk.MKKClient()
         out = kap.discover_mkk_disclosures(
-            conn, batches=min(args.count, 12), detail_limit=args.details,
+            conn, batches=min(args.count, 12), detail_limit=args.details or 30,
             client=client)
         out["parse"] = kap.parse_mkk_pending(
-            conn, limit=args.parse_limit, client=client)
+            conn, limit=args.parse_limit or 4, client=client)
         print(out)
     elif args.action == "reparse":
         out = kap.reparse(conn, limit=args.count)
@@ -617,10 +636,16 @@ def main() -> None:
     p.add_argument("--start", type=int, help="scan start id")
     p.add_argument("--count", type=int, default=100)
     p.add_argument("--period", help="portfolio period YYYY-MM (monthly action)")
-    p.add_argument("--details", type=int, default=30,
+    p.add_argument("--details", type=int,
                    help="MKK disclosure-detail requests (quota-limited)")
-    p.add_argument("--parse-limit", type=int, default=4,
+    p.add_argument("--parse-limit", type=int,
                    help="MKK report attachments to parse")
+    p.add_argument("--batches", type=int,
+                   help="MKK disclosure-list pages for each monthly cycle")
+    p.add_argument("--cycles", type=int, default=1,
+                   help="monthly collection cycles kept in one paced process")
+    p.add_argument("--reset-mkk", action="store_true",
+                   help="reset the selected monthly MKK cursor before collection")
     p.add_argument("--title", help="KAP title for the operator-reviewed alias action")
     p.add_argument("--note", help="optional rationale recorded with a KAP title alias")
     p.add_argument("--eligibility", choices=["expected", "unknown", "exempt"],
