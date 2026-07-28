@@ -1,4 +1,84 @@
 import { signClass } from "@/lib/format";
+import type {
+  ButtonHTMLAttributes,
+  InputHTMLAttributes,
+  SelectHTMLAttributes,
+} from "react";
+
+const controlBase =
+  "h-9 rounded-lg border bg-surface px-3 text-sm shadow-[var(--shadow-sm)] outline-none transition-colors placeholder:text-muted hover:border-fg/25 focus:border-accent";
+
+export function Button({
+  className = "",
+  variant = "primary",
+  type = "button",
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: "primary" | "secondary" | "ghost";
+}) {
+  const styles = {
+    primary: "bg-accent text-white hover:opacity-90",
+    secondary: "bg-surface text-fg hover:bg-accent-soft",
+    ghost: "border-transparent bg-transparent text-muted shadow-none hover:bg-accent-soft hover:text-fg",
+  };
+  return (
+    <button
+      type={type}
+      className={`inline-flex h-9 items-center justify-center rounded-lg border px-3 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${styles[variant]} ${className}`}
+      {...props}
+    />
+  );
+}
+
+export function Input({ className = "", ...props }: InputHTMLAttributes<HTMLInputElement>) {
+  return <input className={`${controlBase} ${className}`} {...props} />;
+}
+
+export function Select({ className = "", ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
+  return <select className={`${controlBase} ${className}`} {...props} />;
+}
+
+export function Badge({
+  children,
+  tone = "neutral",
+  className = "",
+}: {
+  children: React.ReactNode;
+  tone?: "neutral" | "accent" | "positive" | "warning";
+  className?: string;
+}) {
+  const styles = {
+    neutral: "bg-surface text-muted",
+    accent: "bg-accent-soft text-accent",
+    positive: "bg-[color-mix(in_srgb,var(--pos)_12%,transparent)] text-pos",
+    warning: "bg-warning-soft text-warning",
+  };
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${styles[tone]} ${className}`}>
+      {children}
+    </span>
+  );
+}
+
+export function PageHeader({
+  title,
+  description,
+  actions,
+}: {
+  title: React.ReactNode;
+  description?: React.ReactNode;
+  actions?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-wrap items-end justify-between gap-4">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+        {description && <p className="mt-1 max-w-3xl text-sm leading-6 text-muted">{description}</p>}
+      </div>
+      {actions && <div className="flex items-center gap-2">{actions}</div>}
+    </div>
+  );
+}
 
 export function Card({
   children,

@@ -10,6 +10,14 @@
   --accent-soft: #eaf1fb;
   --pos: #0f7a52;
   --neg: #c8372f;
+  --warning: #a86600;
+  --warning-soft: #fff4d6;
+  --info: #2269ba;
+  --stale: #87520a;
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --shadow-sm: 0 1px 2px rgb(22 21 15 / 0.06), 0 1px 3px rgb(22 21 15 / 0.04);
+  --focus-ring: rgb(42 120 214 / 0.38);
   /* System fonts keep builds independent of an external font CDN. */
   --app-font-sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --app-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
@@ -26,6 +34,11 @@
     --accent-soft: #16243a;
     --pos: #35b581;
     --neg: #e5675e;
+    --warning: #efb358;
+    --warning-soft: #3a2b12;
+    --info: #76b2f2;
+    --stale: #e5b45e;
+    --focus-ring: rgb(75 147 232 / 0.48);
   }
 }
 
@@ -39,6 +52,10 @@
   --color-accent-soft: var(--accent-soft);
   --color-pos: var(--pos);
   --color-neg: var(--neg);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-info: var(--info);
+  --color-stale: var(--stale);
   --font-sans: var(--app-font-sans);
   --font-mono: var(--app-font-mono);
 }
@@ -72,4 +89,20 @@ body {
 
 a {
   color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }

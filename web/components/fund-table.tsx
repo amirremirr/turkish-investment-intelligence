@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { FundRow } from "@/lib/queries";
 import { pct, num, tryBn, signClass } from "@/lib/format";
+import { Button, Input, Select } from "@/components/ui";
 
 type SortKey =
   | "skill_score"
@@ -16,98 +18,150 @@ type SortKey =
 const COLS: {
   key: SortKey;
   label: string;
-  title?: string;
-  fmt: (r: FundRow) => string;
+  help: string;
+  fmt: (row: FundRow) => string;
   sign?: boolean;
 }[] = [
-  { key: "ret_1y", label: "1Y return", fmt: (r) => pct(r.ret_1y), sign: true },
-  { key: "sharpe", label: "Sharpe", fmt: (r) => num(r.sharpe, 2), sign: true },
-  { key: "max_dd", label: "Max DD", fmt: (r) => pct(r.max_dd), sign: true },
+  {
+    key: "ret_1y",
+    label: "1Y return",
+    help: "Trailing one-year total return.",
+    fmt: (row) => pct(row.ret_1y),
+    sign: true,
+  },
+  {
+    key: "sharpe",
+    label: "Sharpe",
+    help: "Return per unit of volatility; compare primarily within a similar category.",
+    fmt: (row) => num(row.sharpe, 2),
+    sign: true,
+  },
+  {
+    key: "max_dd",
+    label: "Max DD",
+    help: "Largest peak-to-trough decline over the measured period; less negative is better.",
+    fmt: (row) => pct(row.max_dd),
+    sign: true,
+  },
   {
     key: "skill_score",
     label: "Research score",
-    title: "A fixed-weight heuristic. It is not proof of manager skill; compare within category.",
-    fmt: (r) => num(r.skill_score, 0),
+    help: "A fixed-weight heuristic. It is not proof of manager skill; compare within category.",
+    fmt: (row) => num(row.skill_score, 0),
   },
   {
     key: "suitability_score",
     label: "Suitability score",
-    title: "A fixed-weight comparison aid, not a personalised recommendation.",
-    fmt: (r) => num(r.suitability_score, 0),
+    help: "A fixed-weight comparison aid, not a personalised recommendation.",
+    fmt: (row) => num(row.suitability_score, 0),
   },
-  { key: "aum", label: "AUM", fmt: (r) => tryBn(r.aum) },
+  {
+    key: "aum",
+    label: "AUM",
+    help: "Assets under management in Turkish lira.",
+    fmt: (row) => tryBn(row.aum),
+  },
 ];
 
+const SORT_KEYS = new Set<SortKey>(COLS.map((column) => column.key));
+const PAGE_SIZE = 100;
+
 export function FundTable({ funds }: { funds: FundRow[] }) {
-  const [q, setQ] = useState("");
-  const [cat, setCat] = useState("All");
-  const [minAum, setMinAum] = useState(0);
-  const [sortKey, setSortKey] = useState<SortKey>("skill_score");
-  const [asc, setAsc] = useState(false);
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const [visible, setVisible] = useState(PAGE_SIZE);
+  const q = searchParams.get("q") ?? "";
+  const cat = searchParams.get("cat") ?? "All";
+  const minAum = Number(searchParams.get("minAum") ?? 0) || 0;
+  const requestedSort = searchParams.get("sort") as SortKey | null;
+  const sortKey = requestedSort && SORT_KEYS.has(requestedSort)
+    ? requestedSort
+    : "skill_score";
+  const asc = searchParams.get("dir") === "asc";
+
+  const updateParams = (changes: Record<string, string | number | null>) => {
+    const next = new URLSearchParams(searchParams.toString());
+    for (const [key, value] of Object.entries(changes)) {
+      if (value == null || value === "" || value === 0 || value === "All") {
+        next.delete(key);
+      } else {
+        next.set(key, String(value));
+      }
+    }
+    setVisible(PAGE_SIZE);
+    const query = next.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  };
 
   const categories = useMemo(
-    () => ["All", ...Array.from(new Set(funds.map((f) => f.category).filter(Boolean))).sort() as string[]],
+    () => [
+      "All",
+      ...Array.from(new Set(funds.map((fund) => fund.category).filter(Boolean))).sort() as string[],
+    ],
     [funds]
   );
 
   const rows = useMemo(() => {
     let out = funds;
     if (q.trim()) {
-      const s = q.toLowerCase();
+      const term = q.toLowerCase();
       out = out.filter(
-        (f) =>
-          f.code.toLowerCase().includes(s) ||
-          (f.title ?? "").toLowerCase().includes(s)
+        (fund) =>
+          fund.code.toLowerCase().includes(term) ||
+          (fund.title ?? "").toLowerCase().includes(term)
       );
     }
-    if (cat !== "All") out = out.filter((f) => f.category === cat);
-    if (minAum > 0) out = out.filter((f) => (f.aum ?? 0) >= minAum);
-    out = [...out].sort((a, b) => {
+    if (cat !== "All") out = out.filter((fund) => fund.category === cat);
+    if (minAum > 0) out = out.filter((fund) => (fund.aum ?? 0) >= minAum);
+    return [...out].sort((a, b) => {
       const av = a[sortKey] ?? -Infinity;
       const bv = b[sortKey] ?? -Infinity;
       return asc ? av - bv : bv - av;
     });
-    return out;
   }, [funds, q, cat, minAum, sortKey, asc]);
 
-  const setSort = (k: SortKey) => {
-    if (k === sortKey) setAsc(!asc);
-    else {
-      setSortKey(k);
-      setAsc(false);
-    }
+  const setSort = (key: SortKey) => {
+    updateParams(
+      key === sortKey
+        ? { dir: asc ? "desc" : "asc" }
+        : { sort: key, dir: "desc" }
+    );
   };
 
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <input
+        <Input
           value={q}
-          onChange={(e) => setQ(e.target.value)}
+          onChange={(event) => updateParams({ q: event.target.value })}
           placeholder="Search code or name…"
-          className="h-9 flex-1 min-w-48 rounded-lg border bg-surface px-3 text-sm outline-none focus:border-accent"
+          aria-label="Search funds by code or name"
+          className="min-w-48 flex-1"
         />
-        <select
+        <Select
           value={cat}
-          onChange={(e) => setCat(e.target.value)}
-          className="h-9 rounded-lg border bg-surface px-2 text-sm outline-none focus:border-accent"
+          onChange={(event) => updateParams({ cat: event.target.value })}
+          aria-label="Filter by fund category"
+          className="px-2"
         >
-          {categories.map((c) => (
-            <option key={c} value={c}>
-              {c}
+          {categories.map((category) => (
+            <option key={category} value={category}>
+              {category}
             </option>
           ))}
-        </select>
-        <select
+        </Select>
+        <Select
           value={minAum}
-          onChange={(e) => setMinAum(Number(e.target.value))}
-          className="h-9 rounded-lg border bg-surface px-2 text-sm outline-none focus:border-accent"
+          onChange={(event) => updateParams({ minAum: Number(event.target.value) })}
+          aria-label="Filter by minimum assets under management"
+          className="px-2"
         >
           <option value={0}>Any AUM</option>
           <option value={100e6}>≥ ₺100M</option>
           <option value={500e6}>≥ ₺500M</option>
           <option value={1e9}>≥ ₺1B</option>
-        </select>
+        </Select>
         <span className="text-sm text-muted">{rows.length} funds</span>
       </div>
       <p className="-mt-1 mb-4 text-xs text-muted">
@@ -120,42 +174,47 @@ export function FundTable({ funds }: { funds: FundRow[] }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b bg-surface text-left">
-              <th className="px-3 py-2.5 font-medium">Fund</th>
-              {COLS.map((c) => (
+              <th scope="col" className="sticky left-0 z-10 bg-surface px-3 py-2.5 font-medium">
+                Fund
+              </th>
+              {COLS.map((column) => (
                 <th
-                  key={c.key}
-                  onClick={() => setSort(c.key)}
-                  title={c.title}
-                  className="cursor-pointer select-none whitespace-nowrap px-3 py-2.5 text-right font-medium hover:text-accent"
+                  key={column.key}
+                  scope="col"
+                  aria-sort={sortKey === column.key ? (asc ? "ascending" : "descending") : "none"}
+                  className="whitespace-nowrap px-3 py-2.5 text-right font-medium"
                 >
-                  {c.label}
-                  {sortKey === c.key && (asc ? " ↑" : " ↓")}
+                  <button
+                    type="button"
+                    onClick={() => setSort(column.key)}
+                    title={column.help}
+                    aria-label={`${column.label}. ${column.help} Activate to sort.`}
+                    className="cursor-pointer select-none hover:text-accent"
+                  >
+                    {column.label}
+                    {sortKey === column.key && (asc ? " ↑" : " ↓")}
+                  </button>
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {rows.slice(0, 300).map((f) => (
-              <tr
-                key={f.code}
-                className="border-b last:border-0 hover:bg-accent-soft/40"
-              >
-                <td className="px-3 py-2.5">
-                  <Link href={`/funds/${f.code}`} className="block">
-                    <span className="font-medium text-accent">{f.code}</span>
-                    <span className="ml-2 text-muted">
-                      {(f.title ?? "").slice(0, 42)}
-                    </span>
+            {rows.slice(0, visible).map((fund) => (
+              <tr key={fund.code} className="group border-b last:border-0 hover:bg-accent-soft/40">
+                <td className="sticky left-0 bg-surface px-3 py-2.5 group-hover:bg-accent-soft/40">
+                  <Link href={`/funds/${fund.code}`} className="block">
+                    <span className="font-medium text-accent">{fund.code}</span>
+                    <span className="ml-2 text-muted">{(fund.title ?? "").slice(0, 42)}</span>
                   </Link>
                 </td>
-                {COLS.map((c) => (
+                {COLS.map((column) => (
                   <td
-                    key={c.key}
+                    key={column.key}
                     className={`tnum whitespace-nowrap px-3 py-2.5 text-right ${
-                      c.sign ? signClass(f[c.key]) : ""
+                      column.sign ? signClass(fund[column.key]) : ""
                     }`}
                   >
-                    {c.fmt(f)}
+                    {column.fmt(fund)}
                   </td>
                 ))}
               </tr>
@@ -163,10 +222,15 @@ export function FundTable({ funds }: { funds: FundRow[] }) {
           </tbody>
         </table>
       </div>
-      {rows.length > 300 && (
-        <p className="mt-2 text-xs text-muted">
-          Showing top 300 of {rows.length}. Narrow with search or filters.
-        </p>
+      {rows.length > visible && (
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <p className="text-xs text-muted">
+            Showing {visible.toLocaleString()} of {rows.length.toLocaleString()} funds.
+          </p>
+          <Button variant="secondary" onClick={() => setVisible((count) => count + PAGE_SIZE)}>
+            Show 100 more
+          </Button>
+        </div>
       )}
     </div>
   );
