@@ -58,6 +58,9 @@ def update_raw(conn: sqlite3.Connection) -> None:
         _status(conn, "kap_holdings", kap.daily_update(conn))
     except Exception as err:
         print(f"  kap holdings skipped: {err}")
+    # Persist the coverage classification separately from the scan result.
+    # A successful scan does not mean every fund has a usable holdings book.
+    _status(conn, "kap_coverage", kap.coverage_summary(conn))
     stocks.update_registry(conn)
     stocks.update_prices(conn)
     classify.classify_all(conn)

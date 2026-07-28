@@ -275,6 +275,75 @@ def scan_backward(conn: sqlite3.Connection, budget: int = 4000,
     return out
 
 
+def coverage_summary(conn: sqlite3.Connection) -> dict:
+    """Classify the fund universe by its usable KAP-holdings state.
+
+    A missing book has several materially different causes: KAP may not have
+    been linked to the fund, a report can be waiting for download, or a PDF
+    template can have failed parsing.  Keep those causes separate so neither
+    the website nor operations treats every absence as a zero holding.
+
+    Categories are mutually exclusive, in this order: parsed book, linked
+    pending report, linked parser error, then no resolved KAP report.
+    """
+    conn.executescript(SCHEMA)
+    row = conn.execute("""
+        WITH universe AS (
+            SELECT code FROM funds
+        ), parsed AS (
+            SELECT DISTINCT code FROM fund_holdings WHERE code IS NOT NULL
+        ), linked_reports AS (
+            SELECT COALESCE(k.code, f.code) AS code,
+                   MAX(CASE WHEN k.status = 'found' THEN 1 ELSE 0 END) AS pending,
+                   MAX(CASE WHEN k.status = 'error' THEN 1 ELSE 0 END) AS errors
+            FROM kap_disclosures k
+            LEFT JOIN funds f ON f.title = k.fund_title
+            WHERE COALESCE(k.code, f.code) IS NOT NULL
+            GROUP BY COALESCE(k.code, f.code)
+        )
+        SELECT
+            COUNT(*) AS universe,
+            SUM(CASE WHEN p.code IS NOT NULL THEN 1 ELSE 0 END) AS parsed_funds,
+            SUM(CASE WHEN p.code IS NULL AND r.pending = 1 THEN 1 ELSE 0 END)
+                AS pending_funds,
+            SUM(CASE WHEN p.code IS NULL AND COALESCE(r.pending, 0) = 0
+                      AND r.errors = 1 THEN 1 ELSE 0 END) AS error_funds,
+            SUM(CASE WHEN p.code IS NULL AND r.code IS NULL THEN 1 ELSE 0 END)
+                AS no_resolved_report
+        FROM universe u
+        LEFT JOIN parsed p ON p.code = u.code
+        LEFT JOIN linked_reports r ON r.code = u.code
+    """).fetchone()
+    reports = conn.execute("""
+        SELECT
+            SUM(CASE WHEN status = 'parsed' THEN 1 ELSE 0 END) AS parsed,
+            SUM(CASE WHEN status = 'found' THEN 1 ELSE 0 END) AS pending,
+            SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS errors,
+            SUM(CASE WHEN code IS NULL AND NOT EXISTS (
+                    SELECT 1 FROM funds f WHERE f.title = kap_disclosures.fund_title
+                ) THEN 1 ELSE 0 END) AS unlinked
+        FROM kap_disclosures
+    """).fetchone()
+    latest = conn.execute(
+        "SELECT MAX(period) FROM fund_holdings").fetchone()[0]
+
+    def n(value) -> int:
+        return int(value or 0)
+
+    return {
+        "universe": n(row[0]),
+        "parsed_funds": n(row[1]),
+        "pending_funds": n(row[2]),
+        "error_funds": n(row[3]),
+        "no_resolved_report": n(row[4]),
+        "parsed_reports": n(reports[0]),
+        "pending_reports": n(reports[1]),
+        "error_reports": n(reports[2]),
+        "unlinked_reports": n(reports[3]),
+        "latest_period": latest,
+    }
+
+
 # --------------------------------------------------------------- parse
 
 def _extract_pdf(raw: bytes) -> bytes:

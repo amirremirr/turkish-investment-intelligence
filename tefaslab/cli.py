@@ -240,10 +240,22 @@ def cmd_holdings(args) -> None:
         n = conn.execute("SELECT COUNT(*), COUNT(DISTINCT code), "
                          "COUNT(DISTINCT period) FROM fund_holdings") \
             .fetchone()
-        d = conn.execute("SELECT status, COUNT(*) FROM kap_disclosures "
-                         "GROUP BY status").fetchall()
+        coverage = kap.coverage_summary(conn)
         print(f"holdings rows: {n[0]:,} | funds: {n[1]} | periods: {n[2]}")
-        print("disclosures:", dict(d))
+        print(
+            "coverage: "
+            f"{coverage['parsed_funds']:,}/{coverage['universe']:,} parsed books | "
+            f"{coverage['pending_funds']:,} linked pending | "
+            f"{coverage['error_funds']:,} linked parser errors | "
+            f"{coverage['no_resolved_report']:,} no resolved KAP report"
+        )
+        print(
+            "disclosures: "
+            f"{coverage['parsed_reports']:,} parsed | "
+            f"{coverage['pending_reports']:,} pending | "
+            f"{coverage['error_reports']:,} errors | "
+            f"{coverage['unlinked_reports']:,} unlinked"
+        )
         cur = kap._get_cursor(conn)
         hi = conn.execute(
             "SELECT MAX(id) FROM kap_disclosures").fetchone()[0]

@@ -197,28 +197,60 @@ export async function getDataStatus(): Promise<{
   }, { d: null as unknown as string, n: 0 });
 
   const hold = await one(async () => {
-    const r = await sql`SELECT COUNT(DISTINCT code) AS f,
-      COUNT(DISTINCT period) AS p, MAX(period) AS mp,
-      COUNT(DISTINCT code) FILTER (WHERE weight_pct > 0) AS w
-      FROM fund_holdings`;
+    const r = await sql`
+      WITH universe AS (
+        SELECT code FROM funds
+      ), parsed AS (
+        SELECT DISTINCT code FROM fund_holdings WHERE code IS NOT NULL
+      ), linked_reports AS (
+        SELECT COALESCE(k.code, f.code) AS code,
+          MAX(CASE WHEN k.status = 'found' THEN 1 ELSE 0 END) AS pending,
+          MAX(CASE WHEN k.status = 'error' THEN 1 ELSE 0 END) AS errors
+        FROM kap_disclosures k
+        LEFT JOIN funds f ON f.title = k.fund_title
+        WHERE COALESCE(k.code, f.code) IS NOT NULL
+        GROUP BY COALESCE(k.code, f.code)
+      )
+      SELECT
+        COUNT(*) AS universe,
+        COUNT(*) FILTER (WHERE p.code IS NOT NULL) AS parsed_funds,
+        COUNT(*) FILTER (WHERE p.code IS NULL AND r.pending = 1) AS pending_funds,
+        COUNT(*) FILTER (WHERE p.code IS NULL AND COALESCE(r.pending, 0) = 0
+                         AND r.errors = 1) AS error_funds,
+        COUNT(*) FILTER (WHERE p.code IS NULL AND r.code IS NULL) AS no_resolved_report,
+        (SELECT COUNT(DISTINCT code) FROM fund_holdings
+         WHERE weight_pct > 0) AS with_weights,
+        (SELECT COUNT(DISTINCT period) FROM fund_holdings) AS periods,
+        (SELECT MAX(period) FROM fund_holdings) AS latest_period,
+        (SELECT COUNT(*) FROM kap_disclosures WHERE status = 'parsed') AS parsed_reports,
+        (SELECT COUNT(*) FROM kap_disclosures WHERE status = 'found') AS pending_reports,
+        (SELECT COUNT(*) FROM kap_disclosures WHERE status = 'error') AS error_reports,
+        (SELECT COUNT(*) FROM kap_disclosures k
+         WHERE k.code IS NULL AND NOT EXISTS (
+           SELECT 1 FROM funds f WHERE f.title = k.fund_title
+         )) AS unlinked_reports
+      FROM universe u
+      LEFT JOIN parsed p ON p.code = u.code
+      LEFT JOIN linked_reports r ON r.code = u.code`;
     return {
-      f: Number(r[0].f), p: Number(r[0].p),
-      mp: r[0].mp as string, w: Number(r[0].w),
+      universe: Number(r[0].universe),
+      parsedFunds: Number(r[0].parsed_funds),
+      pendingFunds: Number(r[0].pending_funds),
+      errorFunds: Number(r[0].error_funds),
+      noResolvedReport: Number(r[0].no_resolved_report),
+      withWeights: Number(r[0].with_weights),
+      periods: Number(r[0].periods),
+      latestPeriod: r[0].latest_period as string | null,
+      parsedReports: Number(r[0].parsed_reports),
+      pendingReports: Number(r[0].pending_reports),
+      errorReports: Number(r[0].error_reports),
+      unlinkedReports: Number(r[0].unlinked_reports),
     };
-  }, { f: 0, p: 0, mp: "", w: 0 });
-
-  const kapHealth = await one(async () => {
-    const r = await sql`SELECT
-      COUNT(*) FILTER (WHERE status = 'parsed') AS parsed,
-      COUNT(*) FILTER (WHERE status = 'error') AS errors,
-      COUNT(*) FILTER (WHERE status = 'found') AS pending
-      FROM kap_disclosures`;
-    return {
-      parsed: Number(r[0].parsed),
-      errors: Number(r[0].errors),
-      pending: Number(r[0].pending),
-    };
-  }, { parsed: 0, errors: 0, pending: 0 });
+  }, {
+    universe: 0, parsedFunds: 0, pendingFunds: 0, errorFunds: 0,
+    noResolvedReport: 0, withWeights: 0, periods: 0, latestPeriod: null,
+    parsedReports: 0, pendingReports: 0, errorReports: 0, unlinkedReports: 0,
+  });
 
   const cpi = await one(async () => {
     const r = await sql`SELECT MAX(date) AS d FROM benchmarks
@@ -262,10 +294,10 @@ export async function getDataStatus(): Promise<{
       },
       {
         name: "Fund stock-level holdings (KAP)",
-        coverage: `${hold.f} funds · ${hold.w} with weights · ${hold.p} period${hold.p === 1 ? "" : "s"}`,
-        asOf: hold.mp || null,
-        served: hold.f > 0,
-        note: `Parsed from monthly KAP portfolio PDFs. ${intFmt(kapHealth.parsed)} reports parsed, ${intFmt(kapHealth.errors)} parser errors, and ${intFmt(kapHealth.pending)} pending. This is the thinnest dataset here: coverage is forward-only and currently a small slice of the ~2,400-fund universe, so most fund pages have no book yet.`,
+        coverage: `${intFmt(hold.parsedFunds)} / ${intFmt(hold.universe)} funds parsed · ${intFmt(hold.withWeights)} with weights · ${intFmt(hold.periods)} period${hold.periods === 1 ? "" : "s"}`,
+        asOf: hold.latestPeriod,
+        served: hold.parsedFunds > 0,
+        note: `Coverage audit: ${intFmt(hold.pendingFunds)} funds have a linked KAP report waiting to parse; ${intFmt(hold.errorFunds)} have only parser errors; ${intFmt(hold.noResolvedReport)} have no resolved KAP report. Ledger: ${intFmt(hold.parsedReports)} reports parsed, ${intFmt(hold.pendingReports)} pending, ${intFmt(hold.errorReports)} errors, ${intFmt(hold.unlinkedReports)} not linked to a fund. Holdings are forward-built monthly disclosures, not confirmed zeros for uncovered funds.`,
       },
       {
         name: "Asset-class allocations",
