@@ -18,6 +18,8 @@ import io
 import re
 import sqlite3
 import time
+import unicodedata
+from collections import defaultdict
 from datetime import date
 
 import pdfplumber
@@ -43,7 +45,15 @@ CREATE TABLE IF NOT EXISTS kap_disclosures (
     year        INTEGER,
     period      INTEGER,                 -- month number
     obj_id      TEXT,
-    status      TEXT NOT NULL DEFAULT 'found'  -- found|parsed|error
+    status      TEXT NOT NULL DEFAULT 'found', -- found|retry|parsed|error
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    last_error  TEXT,
+    last_attempt_at TEXT
+);
+CREATE TABLE IF NOT EXISTS kap_fund_aliases (
+    kap_title   TEXT PRIMARY KEY,
+    code        TEXT NOT NULL,
+    note        TEXT
 );
 CREATE TABLE IF NOT EXISTS fund_holdings (
     code        TEXT NOT NULL,
@@ -81,11 +91,52 @@ CREATE TABLE IF NOT EXISTS kap_backfill_state (
 );
 """
 
+MAX_RETRY_ATTEMPTS = 3
+
 
 def _connect(db_path=db.DB_PATH) -> sqlite3.Connection:
     conn = db.connect(db_path)
-    conn.executescript(SCHEMA)
+    _ensure_schema(conn)
     return conn
+
+
+def _ensure_schema(conn: sqlite3.Connection) -> None:
+    """Apply additive KAP-ledger migrations to cached pre-existing DBs."""
+    conn.executescript(SCHEMA)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(kap_disclosures)")}
+    for name, definition in (
+        ("attempts", "INTEGER NOT NULL DEFAULT 0"),
+        ("last_error", "TEXT"),
+        ("last_attempt_at", "TEXT"),
+    ):
+        if name not in columns:
+            conn.execute(f"ALTER TABLE kap_disclosures ADD COLUMN {name} {definition}")
+    conn.commit()
+
+
+def _normalise_title(value: str | None) -> str:
+    """Canonicalise Turkish fund titles for exact, non-fuzzy matching."""
+    value = (value or "").upper().translate(str.maketrans({
+        "Ç": "C", "Ğ": "G", "İ": "I", "I": "I", "Ö": "O",
+        "Ş": "S", "Ü": "U", "Â": "A", "Î": "I", "Û": "U",
+    }))
+    value = unicodedata.normalize("NFKD", value)
+    return "".join(ch for ch in value if ch.isascii() and ch.isalnum())
+
+
+def set_title_alias(conn: sqlite3.Connection, kap_title: str, code: str,
+                    note: str | None = None) -> None:
+    """Store an operator-reviewed KAP-title to TEFAS-code mapping."""
+    _ensure_schema(conn)
+    valid = conn.execute("SELECT 1 FROM funds WHERE code=?", (code.upper(),)).fetchone()
+    if not valid:
+        raise ValueError(f"unknown fund code: {code}")
+    conn.execute(
+        "INSERT INTO kap_fund_aliases (kap_title, code, note) VALUES (?,?,?) "
+        "ON CONFLICT(kap_title) DO UPDATE SET code=excluded.code, note=excluded.note",
+        (kap_title.strip(), code.upper(), note),
+    )
+    conn.commit()
 
 
 # ---------------------------------------------------------------- scan
@@ -206,7 +257,7 @@ def scan_forward(conn: sqlite3.Connection, budget: int = 4000,
     cursor lets the scan walk to KAP's live ceiling, picking up each
     month's reports as it passes them, then simply track the ceiling.
     """
-    conn.executescript(SCHEMA)
+    _ensure_schema(conn)
     start = _get_cursor(conn) + 1
     if start <= 1:
         print("  no kap frontier yet — run `holdings scan --start <id>` once")
@@ -255,7 +306,7 @@ def scan_backward(conn: sqlite3.Connection, budget: int = 4000,
     scans the block contiguously rather than trying to guess where they
     sit — clusters are found by walking past them.
     """
-    conn.executescript(SCHEMA)
+    _ensure_schema(conn)
     hi = _get_back_cursor(conn)
     if hi <= 1:
         print("  no kap floor yet — run `holdings scan --start <id>` once")
@@ -286,7 +337,7 @@ def coverage_summary(conn: sqlite3.Connection) -> dict:
     Categories are mutually exclusive, in this order: parsed book, linked
     pending report, linked parser error, then no resolved KAP report.
     """
-    conn.executescript(SCHEMA)
+    _ensure_schema(conn)
     row = conn.execute("""
         WITH universe AS (
             SELECT code FROM funds
@@ -294,7 +345,7 @@ def coverage_summary(conn: sqlite3.Connection) -> dict:
             SELECT DISTINCT code FROM fund_holdings WHERE code IS NOT NULL
         ), linked_reports AS (
             SELECT COALESCE(k.code, f.code) AS code,
-                   MAX(CASE WHEN k.status = 'found' THEN 1 ELSE 0 END) AS pending,
+                   MAX(CASE WHEN k.status IN ('found', 'retry') THEN 1 ELSE 0 END) AS pending,
                    MAX(CASE WHEN k.status = 'error' THEN 1 ELSE 0 END) AS errors
             FROM kap_disclosures k
             LEFT JOIN funds f ON f.title = k.fund_title
@@ -317,7 +368,7 @@ def coverage_summary(conn: sqlite3.Connection) -> dict:
     reports = conn.execute("""
         SELECT
             SUM(CASE WHEN status = 'parsed' THEN 1 ELSE 0 END) AS parsed,
-            SUM(CASE WHEN status = 'found' THEN 1 ELSE 0 END) AS pending,
+            SUM(CASE WHEN status IN ('found', 'retry') THEN 1 ELSE 0 END) AS pending,
             SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS errors,
             SUM(CASE WHEN code IS NULL AND NOT EXISTS (
                     SELECT 1 FROM funds f WHERE f.title = kap_disclosures.fund_title
@@ -345,6 +396,41 @@ def coverage_summary(conn: sqlite3.Connection) -> dict:
 
 
 # --------------------------------------------------------------- parse
+
+def _resolve_fund_code(
+    pdf_code: str | None,
+    fund_title: str | None,
+    known_codes: set[str],
+    exact_titles: dict[str, str],
+    normalised_titles: dict[str, set[str]],
+    aliases: dict[str, str],
+) -> str | None:
+    """Resolve only deterministic code/title relationships.
+
+    Title similarity is deliberately *not* used: a bad holdings assignment is
+    worse than an uncovered fund.  Normalised titles are accepted only when
+    they map to exactly one TEFAS code; all ambiguous cases need an explicit
+    operator alias.
+    """
+    if pdf_code in known_codes:
+        return pdf_code
+    if fund_title in exact_titles:
+        return exact_titles[fund_title]
+    if fund_title in aliases:
+        return aliases[fund_title]
+    matches = normalised_titles.get(_normalise_title(fund_title), set())
+    return next(iter(matches)) if len(matches) == 1 else None
+
+
+def _is_transient_parse_error(err: Exception) -> bool:
+    """Only network/download failures should automatically re-enter the queue."""
+    text = str(err).lower()
+    return isinstance(err, requests.RequestException) or any(
+        marker in text for marker in (
+            "download failed", "no attachment objid", "no %pdf marker",
+            "timeout", "connection", "temporarily",
+        )
+    )
 
 def _extract_pdf(raw: bytes) -> bytes:
     i = raw.find(b"%PDF")
@@ -511,11 +597,14 @@ def daily_update(conn: sqlite3.Connection, max_ids: int = 5000) -> dict:
     the cursor closes the gap to the live ceiling and then tracks it —
     which is what makes new monthly reports arrive on their own.
     """
-    conn.executescript(SCHEMA)
+    _ensure_schema(conn)
     if _get_cursor(conn) <= 0:
         print("  no kap frontier yet — run `holdings scan --start <id>` once")
         return {}
     out = scan_forward(conn, budget=max_ids)
+    # Safely re-attempt pre-retry-ledger failures once. New failures carry a
+    # reason and are retried automatically only when the download was transient.
+    out["legacy_errors"] = requeue_legacy_errors(conn, limit=50)
     out.update(parse_pending(conn, limit=300))
     return out
 
@@ -527,10 +616,10 @@ def reparse(conn: sqlite3.Connection, limit: int = 500,
     the old one dropped. Resets 'parsed'/'error' rows to 'found' so
     parse_pending picks them up; INSERT OR REPLACE overwrites the stale
     fund_holdings rows, so it is idempotent and safe to re-run."""
-    conn.executescript(SCHEMA)
+    _ensure_schema(conn)
     n = conn.execute(
-        "UPDATE kap_disclosures SET status='found' "
-        "WHERE status IN ('parsed', 'error')").rowcount
+        "UPDATE kap_disclosures SET status='found', attempts=0, last_error=NULL "
+        "WHERE status IN ('parsed', 'retry', 'error')").rowcount
     conn.commit()
     print(f"  reset {n} disclosures to 'found' for reparse")
     return parse_pending(conn, limit=limit, session=session)
@@ -563,22 +652,34 @@ def _fetch_disclosure(s: requests.Session, did: int,
 
 def parse_pending(conn: sqlite3.Connection, limit: int = 50,
                   session: requests.Session | None = None) -> dict:
-    """Resolve + parse disclosures in status 'found'."""
+    """Resolve + parse newly found and transient-retry disclosures."""
+    _ensure_schema(conn)
     s = session or requests.Session()
     known_codes = {c for (c,) in conn.execute("SELECT code FROM funds")}
     titles = {t: c for c, t in conn.execute(
         "SELECT code, title FROM funds") if t}
+    normalised_titles: dict[str, set[str]] = defaultdict(set)
+    for title, code in titles.items():
+        normalised_titles[_normalise_title(title)].add(code)
+    aliases = {title: code for title, code in conn.execute(
+        "SELECT kap_title, code FROM kap_fund_aliases")}
     rows = conn.execute(
-        "SELECT id, fund_title, year, period FROM kap_disclosures "
-        "WHERE status='found' ORDER BY id DESC LIMIT ?",
+        "SELECT id, fund_title, year, period, attempts FROM kap_disclosures "
+        "WHERE status IN ('found', 'retry') "
+        "ORDER BY CASE status WHEN 'found' THEN 0 ELSE 1 END, id DESC LIMIT ?",
         (limit,)).fetchall()
-    ok = err = 0
-    for did, fund_title, year, per in rows:
+    ok = retry = err = 0
+    for did, fund_title, year, per, attempts in rows:
+        attempts = int(attempts or 0) + 1
+        conn.execute(
+            "UPDATE kap_disclosures SET attempts=?, last_attempt_at=datetime('now') "
+            "WHERE id=?", (attempts, did))
+        conn.commit()
         try:
             obj_id, pdf = _fetch_disclosure(s, did)
             code, holdings = parse_pdf_holdings(pdf)
-            if code not in known_codes:
-                code = titles.get(fund_title)
+            code = _resolve_fund_code(
+                code, fund_title, known_codes, titles, normalised_titles, aliases)
             if not code:
                 raise ValueError(f"fund code unresolved ({fund_title!r})")
             if not holdings:
@@ -599,18 +700,58 @@ def parse_pending(conn: sqlite3.Connection, limit: int = 50,
                   h["quantity"], h["value"], h["weight_pct"], did)
                  for h in holdings])
             conn.execute("UPDATE kap_disclosures SET status='parsed', "
-                         "code=?, obj_id=? WHERE id=?",
+                         "code=?, obj_id=?, last_error=NULL WHERE id=?",
                          (code, obj_id, did))
             ok += 1
             print(f"  {did} {code}: {len(holdings)} holdings ({period})")
         except Exception as e:
-            conn.execute("UPDATE kap_disclosures SET status='error' "
-                         "WHERE id=?", (did,))
-            err += 1
-            print(f"  {did} ERROR: {e}")
+            transient = _is_transient_parse_error(e)
+            next_status = "retry" if transient and attempts < MAX_RETRY_ATTEMPTS else "error"
+            conn.execute("UPDATE kap_disclosures SET status=?, last_error=? "
+                         "WHERE id=?", (next_status, str(e)[:500], did))
+            if next_status == "retry":
+                retry += 1
+                print(f"  {did} RETRY {attempts}/{MAX_RETRY_ATTEMPTS}: {e}")
+            else:
+                err += 1
+                print(f"  {did} ERROR: {e}")
         conn.commit()
         time.sleep(PAUSE)
-    return {"parsed": ok, "errors": err}
+    return {"parsed": ok, "retries": retry, "errors": err}
+
+
+def requeue_legacy_errors(conn: sqlite3.Connection, limit: int = 50) -> dict:
+    """Give pre-retry-ledger errors one controlled recovery attempt.
+
+    Older cached rows have no recorded reason, so they cannot be safely
+    classified as transient or terminal. Requeue each only once; subsequent
+    failures record a reason and remain terminal until an operator fixes a
+    parser/template and explicitly runs ``holdings reparse``.
+    """
+    _ensure_schema(conn)
+    ids = [row[0] for row in conn.execute(
+        "SELECT id FROM kap_disclosures WHERE status='error' "
+        "AND last_error IS NULL ORDER BY id DESC LIMIT ?", (limit,))]
+    if ids:
+        conn.executemany(
+            "UPDATE kap_disclosures SET status='retry', attempts=0 "
+            "WHERE id=?", ((did,) for did in ids))
+        conn.commit()
+    return {"requeued": len(ids)}
+
+
+def requeue_errors(conn: sqlite3.Connection, limit: int = 50) -> dict:
+    """Operator-triggered retry after a parser or mapping change."""
+    _ensure_schema(conn)
+    ids = [row[0] for row in conn.execute(
+        "SELECT id FROM kap_disclosures WHERE status='error' "
+        "ORDER BY id DESC LIMIT ?", (limit,))]
+    if ids:
+        conn.executemany(
+            "UPDATE kap_disclosures SET status='retry', attempts=0, "
+            "last_error=NULL WHERE id=?", ((did,) for did in ids))
+        conn.commit()
+    return {"requeued": len(ids)}
 
 
 # --------------------------------------------------------------- query

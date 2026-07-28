@@ -13,9 +13,11 @@ production ([tefaslab/kap.py](../tefaslab/kap.py)).*
 | Table parser (`parse_pdf_holdings`) | ✅ working — position-based row reconstruction; on the test fund: 89/89 holdings, 0 missing values, **weights sum to 98.1%** (rest is cash) |
 | `fund_holdings` table + `kap_disclosures` ledger | ✅ in the shared DB |
 | Coverage audit | ✅ classifies every fund as parsed, linked-pending, parser-error, or no resolved KAP report; shown on the public data-status page |
+| Recovery queue | ✅ transient downloads retry up to three times; legacy failures receive one controlled retry; terminal parser errors retain their reason |
+| Title resolution | ✅ PDF code, exact title, unique normalised title, and operator-reviewed aliases; never fuzzy-matched |
 | Queries: `holdings who ASELS`, `holdings fund IJZ`, `holdings stats` | ✅ CLI |
 | Analytics: `crowding` (breadth of ownership), `active` (peer active share), `attrib` (stock-level contribution) | ✅ [ownership.py](../tefaslab/ownership.py) — each reports its own universe size |
-| Nightly integration | ✅ pipeline scans forward from the ID frontier within a 25-minute wall-clock budget and parses new reports |
+| Nightly integration | ✅ pipeline scans forward from the ID frontier within a 25-minute wall-clock budget and parses new reports; a separate bounded Sunday backfill walks older IDs |
 
 ## Upsides (why this is worth it)
 
@@ -69,6 +71,10 @@ production ([tefaslab/kap.py](../tefaslab/kap.py)).*
     resolved KAP report, a discovered report waiting to parse, or a parser
     error. The data-status page and `holdings stats` report these separately;
     only a parsed book is treated as holdings coverage.
+11. **Recovery is deliberately conservative.** Network/download failures retry
+    automatically; template and fund-resolution failures become terminal with
+    their reason retained. Add a fixture, parser support, or an operator-
+    reviewed title alias rather than guessing a match.
 
 ## What was established
 
@@ -99,6 +105,17 @@ production ([tefaslab/kap.py](../tefaslab/kap.py)).*
 ## Pipeline spec (v1)
 
 ```
+
+### Operations
+
+- `python -m tefaslab holdings retry --count 50` requeues terminal errors
+  after a parser or mapping fix, then attempts them once.
+- `python -m tefaslab holdings alias ABC --title "KAP report title"` stores an
+  explicit KAP-title → TEFAS-code mapping. Add `--note` to retain the
+  verification rationale.
+- The scheduled Sunday backfill uses the same persisted DB and concurrency
+  lock as the daily job, so it cannot race the forward scanner or overwrite
+  newer state.
 daily:  scan new ids ──▶ filter "Portföy Dağılım Raporu"
                      ──▶ Bildirim page ─▶ fund + objId
                      ──▶ download PDF (strip wrapper)
