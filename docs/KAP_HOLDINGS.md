@@ -23,10 +23,12 @@ production ([tefaslab/kap.py](../tefaslab/kap.py)).*
 ## Official MKK discovery
 
 The official MKK API is now the production discovery route for monthly
-holdings. It stores a persistent disclosure-index checkpoint and spaces calls
-10.5 seconds apart to stay inside the six-calls-per-minute product limit. Its
-disclosure index is stored separately from public KAP notification IDs; those
-identifiers must never be assumed interchangeable.
+holdings. It stores a separate backward cursor for each portfolio month and
+walks from the current MKK head through older 50-notice pages, so a filing wave
+cannot be reduced to its newest 50 notices. Calls are spaced 10.5 seconds
+apart to stay inside the six-calls-per-minute product limit. Its disclosure
+index is stored separately from public KAP notification IDs; those identifiers
+must never be assumed interchangeable.
 
 The MKK detail record supplies the fund code, subject, reporting period,
 publication time and attachment references. The attachment remains the source
@@ -35,6 +37,13 @@ Every parsed MKK snapshot records its source, attachment ID, SHA-256, parser
 version and publication time. A newer report for the same fund/month replaces
 the complete prior snapshot, so corrections cannot leave deleted positions in
 the product. Durable raw-file object storage is the remaining provenance step.
+
+The monthly job runs once daily on calendar days 1â€“15, for roughly 60â€“90
+minutes. It has capacity for about 120 parsed reports per run and preserves
+the uncompleted range for the next run. Coverage is measured among active
+TEFAS mutual funds expected to report; a fund can be marked `unknown` or
+`exempt` only through an operator-reviewed record with a reason and optional
+evidence URL. An absent report never creates an exemption automatically.
 
 ## Upsides (why this is worth it)
 

@@ -95,6 +95,18 @@ Official-MKK discovery ledger. The MKK `disclosure_index` is a separate key
 from KAP's public notification ID. It records fund code, subject, reporting
 period, published time, attachment metadata, status, attempts and errors.
 
+### mkk_monthly_scan_state
+
+Per-portfolio-month backward cursor through the MKK disclosure index. It
+prevents a collection run from repeatedly seeing only the latest 50 notices.
+
+### fund_holdings_scope
+
+Operator-reviewed coverage classification for a TEFAS mutual fund:
+`expected`, `unknown`, or `exempt`, with a mandatory reason and optional
+evidence URL. It controls the public monthly-holdings denominator; missing
+reports never create an exemption automatically.
+
 ### kap_disclosures
 Scanner ledger: one row per discovered portfolio-report disclosure
 (id, fund_title, year, period, obj_id, status found/parsed/error).

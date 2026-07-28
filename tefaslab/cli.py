@@ -266,6 +266,11 @@ def cmd_holdings(args) -> None:
             raise ValueError("holdings alias needs a fund code and --title")
         kap.set_title_alias(conn, args.title, args.arg, args.note)
         print(f"alias saved: {args.title!r} -> {args.arg.upper()}")
+    elif args.action == "scope":
+        if not args.arg or not args.eligibility or not args.note:
+            raise ValueError("holdings scope needs a fund code, --eligibility, and --note")
+        kap.set_holdings_scope(conn, args.arg, args.eligibility, args.note, args.evidence)
+        print(f"monthly holdings scope saved: {args.arg.upper()} -> {args.eligibility}")
     elif args.action == "errors":
         rows = kap.error_report(conn, limit=args.count)
         text = pd.DataFrame(rows).to_string(index=False) if rows else "no terminal errors"
@@ -605,7 +610,7 @@ def main() -> None:
     p.set_defaults(func=cmd_intraday_cloud)
 
     p = sub.add_parser("holdings", help="KAP fund holdings pipeline")
-    p.add_argument("action", choices=["scan", "parse", "reparse", "retry", "alias", "errors",
+    p.add_argument("action", choices=["scan", "parse", "reparse", "retry", "alias", "scope", "errors",
                                       "backfill", "monthly", "mkk", "mkk-sync", "who", "fund", "stats",
                                       "crowding", "active", "attrib"])
     p.add_argument("arg", nargs="?", help="ticker (who) / fund code (fund)")
@@ -618,6 +623,9 @@ def main() -> None:
                    help="MKK report attachments to parse")
     p.add_argument("--title", help="KAP title for the operator-reviewed alias action")
     p.add_argument("--note", help="optional rationale recorded with a KAP title alias")
+    p.add_argument("--eligibility", choices=["expected", "unknown", "exempt"],
+                   help="monthly holdings filing eligibility for scope action")
+    p.add_argument("--evidence", help="supporting public/legal URL for scope action")
     p.set_defaults(func=cmd_holdings)
 
     p = sub.add_parser("evds", help="fetch TCMB macro series (needs "

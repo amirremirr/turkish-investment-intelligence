@@ -429,6 +429,7 @@ def test_kap_monthly_status_tracks_due_month_without_claiming_zero(tmp_conn):
         "INSERT INTO fund_holdings (code, period, isin) VALUES "
         "('AAA', '2026-05', 'TR0000000001')"
     )
+    kap.set_holdings_scope(tmp_conn, "DDD", "unknown", "eligibility not yet reviewed")
     tmp_conn.executemany(
         "INSERT INTO kap_disclosures (id, fund_title, year, period, status) "
         "VALUES (?,?,?,?,?)",
@@ -443,11 +444,12 @@ def test_kap_monthly_status_tracks_due_month_without_claiming_zero(tmp_conn):
     assert out["pending_funds"] == 1
     assert out["error_funds"] == 1
     assert out["unseen_funds"] == 0
+    assert out["unknown_funds"] == 1
     assert out["capture_rate"] == pytest.approx(33.3)
-    # The money-market fund is not silently called "missing" because it is
-    # outside the security-holdings product scope.
+    # Unknown eligibility is visible but stays outside the expected-reporter
+    # denominator until an operator attaches regulatory evidence.
     assert tmp_conn.execute(
-        "SELECT COUNT(*) FROM kap_monthly_status WHERE code='DDD'").fetchone()[0] == 0
+        "SELECT eligibility FROM kap_monthly_status WHERE code='DDD'").fetchone()[0] == "unknown"
 
 
 def test_kap_due_month_respects_publication_grace_period():
@@ -458,6 +460,7 @@ def test_kap_due_month_respects_publication_grace_period():
     # still the newest completed reporting month.
     assert kap.latest_due_period(date(2026, 7, 29)) == "2026-06"
     assert kap.latest_due_period(date(2026, 7, 14)) == "2026-05"
+    assert kap.latest_collection_period(date(2026, 7, 1)) == "2026-06"
 
 
 def test_mkk_discovery_uses_checkpoint_and_subject_not_fund_type(tmp_conn):
@@ -496,6 +499,33 @@ def test_mkk_discovery_uses_checkpoint_and_subject_not_fund_type(tmp_conn):
     monthly = kap.refresh_monthly_status(tmp_conn, "2026-06")
     assert monthly["pending_funds"] == 1 and monthly["unseen_funds"] == 0
     assert tmp_conn.execute("SELECT cursor FROM mkk_scan_state WHERE id=1").fetchone()[0] == 102
+
+
+def test_mkk_monthly_collector_walks_backward_not_only_latest_page(tmp_conn):
+    from tefaslab import kap
+
+    class Client:
+        def last_disclosure_index(self):
+            return 250
+
+        def disclosures(self, start):
+            return [
+                {"disclosureIndex": did, "fundCode": "AAA", "fundId": "1",
+                 "title": "Alpha", "subReportIds": [], "acceptedDataFileTypes": []}
+                for did in range(start, start + 50)
+            ]
+
+    tmp_conn.executescript(kap.SCHEMA)
+    tmp_conn.execute("INSERT INTO funds VALUES ('AAA', 'Alpha', 'YAT', 'Equity Turkey')")
+    first = kap.discover_mkk_monthly(tmp_conn, "2026-06", batches=2,
+                                     detail_limit=0, client=Client())
+    # First page is 201..250, then the collector moves to 151..200 instead
+    # of advancing beyond 250 and repeatedly inspecting the newest 50.
+    assert first["head_index"] == 250 and first["cursor"] == 101
+    second = kap.discover_mkk_monthly(tmp_conn, "2026-06", batches=1,
+                                      detail_limit=0, client=Client())
+    assert second["cursor"] == 51
+    assert tmp_conn.execute("SELECT COUNT(*) FROM mkk_disclosures").fetchone()[0] == 150
 
 
 def test_mkk_parse_replaces_monthly_snapshot_and_records_provenance(tmp_conn, monkeypatch):

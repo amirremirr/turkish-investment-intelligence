@@ -111,7 +111,11 @@ export default async function FundPage({
     : portfolioStatus?.state === "error"
       ? `A KAP portfolio disclosure for ${portfolioStatus.duePeriod} was found but its template could not be parsed yet. This is not a zero-holdings result.`
       : portfolioStatus?.state === "unseen"
-        ? `No KAP portfolio disclosure has been deterministically linked for the due month ${portfolioStatus.duePeriod}. This is unknown coverage, not evidence of zero holdings or non-filing.`
+        ? portfolioStatus.eligibility === "unknown"
+          ? `Monthly reporting eligibility has not been confirmed for this fund${portfolioStatus.eligibilityReason ? `: ${portfolioStatus.eligibilityReason}` : ""}. This is not evidence of zero holdings or non-filing.`
+          : `No KAP portfolio disclosure has been deterministically linked for the due month ${portfolioStatus.duePeriod}. This is unknown coverage, not evidence of zero holdings or non-filing.`
+        : portfolioStatus?.state === "exempt"
+          ? `This fund is excluded from the monthly-holdings denominator${portfolioStatus.eligibilityReason ? `: ${portfolioStatus.eligibilityReason}` : ""}.`
         : null;
 
   return (

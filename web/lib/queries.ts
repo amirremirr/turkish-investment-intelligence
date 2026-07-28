@@ -161,7 +161,9 @@ export async function getFundHoldings(code: string): Promise<Holding[]> {
 
 export type FundPortfolioStatus = {
   duePeriod: string;
-  state: "parsed" | "pending" | "error" | "unseen";
+  state: "parsed" | "pending" | "error" | "unseen" | "exempt";
+  eligibility: "expected" | "unknown" | "exempt";
+  eligibilityReason: string | null;
   latestPeriod: string | null;
 };
 
@@ -173,7 +175,7 @@ export async function getFundPortfolioStatus(
 ): Promise<FundPortfolioStatus | null> {
   const c = code.toUpperCase();
   const rows = await sql`
-    SELECT s.period AS due_period, s.state,
+    SELECT s.period AS due_period, s.state, s.eligibility, s.eligibility_reason,
            (SELECT MAX(period) FROM fund_holdings WHERE code = ${c}) AS latest_period
     FROM kap_monthly_status s
     WHERE s.code = ${c}
@@ -183,6 +185,8 @@ export async function getFundPortfolioStatus(
   return {
     duePeriod: rows[0].due_period as string,
     state: rows[0].state as FundPortfolioStatus["state"],
+    eligibility: rows[0].eligibility as FundPortfolioStatus["eligibility"],
+    eligibilityReason: (rows[0].eligibility_reason as string | null) ?? null,
     latestPeriod: (rows[0].latest_period as string | null) ?? null,
   };
 }
@@ -295,11 +299,13 @@ export async function getDataStatus(): Promise<{
   const monthlyHold = await one(async () => {
     const r = await sql`
       SELECT period,
-             COUNT(*) AS eligible,
-             COUNT(*) FILTER (WHERE state = 'parsed') AS parsed,
-             COUNT(*) FILTER (WHERE state = 'pending') AS pending,
-             COUNT(*) FILTER (WHERE state = 'error') AS errors,
-             COUNT(*) FILTER (WHERE state = 'unseen') AS unseen
+             COUNT(*) FILTER (WHERE eligibility = 'expected') AS eligible,
+             COUNT(*) FILTER (WHERE eligibility = 'expected' AND state = 'parsed') AS parsed,
+             COUNT(*) FILTER (WHERE eligibility = 'expected' AND state = 'pending') AS pending,
+             COUNT(*) FILTER (WHERE eligibility = 'expected' AND state = 'error') AS errors,
+             COUNT(*) FILTER (WHERE eligibility = 'expected' AND state = 'unseen') AS unseen,
+             COUNT(*) FILTER (WHERE eligibility = 'unknown') AS unknown,
+             COUNT(*) FILTER (WHERE eligibility = 'exempt') AS exempt
       FROM kap_monthly_status
       WHERE period = (SELECT MAX(period) FROM kap_monthly_status)
       GROUP BY period`;
@@ -310,10 +316,12 @@ export async function getDataStatus(): Promise<{
       pending: Number(r[0].pending),
       errors: Number(r[0].errors),
       unseen: Number(r[0].unseen),
+      unknown: Number(r[0].unknown),
+      exempt: Number(r[0].exempt),
     } : null;
   }, null as {
     period: string; eligible: number; parsed: number; pending: number;
-    errors: number; unseen: number;
+    errors: number; unseen: number; unknown: number; exempt: number;
   } | null);
 
   const cpi = await one(async () => {
@@ -359,12 +367,12 @@ export async function getDataStatus(): Promise<{
       {
         name: "Monthly KAP holdings disclosure SLA",
         coverage: monthlyHold
-          ? `Due month ${monthlyHold.period}: ${intFmt(monthlyHold.parsed)} / ${intFmt(monthlyHold.eligible)} parsed; ${intFmt(monthlyHold.pending)} pending; ${intFmt(monthlyHold.errors)} parser errors; ${intFmt(monthlyHold.unseen)} unseen`
+          ? `Due month ${monthlyHold.period}: ${intFmt(monthlyHold.parsed)} / ${intFmt(monthlyHold.eligible)} expected reporters parsed; ${intFmt(monthlyHold.pending)} pending; ${intFmt(monthlyHold.errors)} parser errors; ${intFmt(monthlyHold.unseen)} unseen; ${intFmt(monthlyHold.unknown)} eligibility unknown; ${intFmt(monthlyHold.exempt)} reviewed exemptions`
           : "No published monthly coverage ledger yet",
         asOf: monthlyHold?.period ?? null,
         served: !!monthlyHold,
         note: monthlyHold
-          ? "The due month is assessed after a 15-day operating grace. MKK's official index is the primary discovery route; unseen means no deterministic report has been collected, not a zero holding or proof of non-filing."
+          ? "The due month is assessed after a 15-day operating grace. MKK's official index is the primary discovery route. Expected reporters are active TEFAS mutual funds unless an evidence-backed scope review marks them unknown or exempt; unseen is never a zero holding or proof of non-filing."
           : "The first dedicated monthly KAP collection run will publish this per-fund ledger. Until then, all-history holdings coverage must not be read as current-month coverage.",
       },
       {
