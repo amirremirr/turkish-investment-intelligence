@@ -61,6 +61,11 @@ def update_raw(conn: sqlite3.Connection) -> None:
     # Persist the coverage classification separately from the scan result.
     # A successful scan does not mean every fund has a usable holdings book.
     _status(conn, "kap_coverage", kap.coverage_summary(conn))
+    # The monthly ledger has a different question: whether the latest *due*
+    # portfolio month has been captured for the in-scope universe. Keep it
+    # separate from the all-history coverage statistic so staleness cannot be
+    # hidden by old books.
+    _status(conn, "kap_monthly_coverage", kap.monthly_status_summary(conn))
     stocks.update_registry(conn)
     stocks.update_prices(conn)
     classify.classify_all(conn)

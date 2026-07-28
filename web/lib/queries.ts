@@ -123,6 +123,7 @@ export async function getFundNav(
 }
 
 export type Holding = {
+  period: string;
   ticker: string | null;
   name: string | null;
   weight_pct: number | null;
@@ -143,18 +144,47 @@ export async function getFundHoldings(code: string): Promise<Holding[]> {
     crowd AS (
       SELECT ticker, COUNT(DISTINCT code) AS n_funds FROM book GROUP BY ticker
     )
-    SELECT b.ticker, b.name, b.weight_pct, b.value, c.n_funds
+    SELECT b.period, b.ticker, b.name, b.weight_pct, b.value, c.n_funds
     FROM book b
     LEFT JOIN crowd c ON c.ticker = b.ticker
     WHERE b.code = ${c}
     ORDER BY b.weight_pct DESC NULLS LAST`;
   return rows.map((r) => ({
+    period: r.period as string,
     ticker: r.ticker,
     name: r.name,
     weight_pct: n(r.weight_pct),
     value: n(r.value),
     n_funds: n(r.n_funds),
   }));
+}
+
+export type FundPortfolioStatus = {
+  duePeriod: string;
+  state: "parsed" | "pending" | "error" | "unseen";
+  latestPeriod: string | null;
+};
+
+// A holdings book is only useful when its reporting month is visible. The
+// monthly status ledger is deliberately separate from fund_holdings: an
+// absent book is unknown/unseen, never a claim that the fund holds nothing.
+export async function getFundPortfolioStatus(
+  code: string
+): Promise<FundPortfolioStatus | null> {
+  const c = code.toUpperCase();
+  const rows = await sql`
+    SELECT s.period AS due_period, s.state,
+           (SELECT MAX(period) FROM fund_holdings WHERE code = ${c}) AS latest_period
+    FROM kap_monthly_status s
+    WHERE s.code = ${c}
+    ORDER BY s.period DESC
+    LIMIT 1`;
+  if (!rows.length) return null;
+  return {
+    duePeriod: rows[0].due_period as string,
+    state: rows[0].state as FundPortfolioStatus["state"],
+    latestPeriod: (rows[0].latest_period as string | null) ?? null,
+  };
 }
 
 export type DataSet = {
@@ -262,6 +292,30 @@ export async function getDataStatus(): Promise<{
     equityOrientedUniverse: 0, equityOrientedParsed: 0,
   });
 
+  const monthlyHold = await one(async () => {
+    const r = await sql`
+      SELECT period,
+             COUNT(*) AS eligible,
+             COUNT(*) FILTER (WHERE state = 'parsed') AS parsed,
+             COUNT(*) FILTER (WHERE state = 'pending') AS pending,
+             COUNT(*) FILTER (WHERE state = 'error') AS errors,
+             COUNT(*) FILTER (WHERE state = 'unseen') AS unseen
+      FROM kap_monthly_status
+      WHERE period = (SELECT MAX(period) FROM kap_monthly_status)
+      GROUP BY period`;
+    return r.length ? {
+      period: r[0].period as string,
+      eligible: Number(r[0].eligible),
+      parsed: Number(r[0].parsed),
+      pending: Number(r[0].pending),
+      errors: Number(r[0].errors),
+      unseen: Number(r[0].unseen),
+    } : null;
+  }, null as {
+    period: string; eligible: number; parsed: number; pending: number;
+    errors: number; unseen: number;
+  } | null);
+
   const cpi = await one(async () => {
     const r = await sql`SELECT MAX(date) AS d FROM benchmarks
       WHERE series = 'cpi_index'`;
@@ -301,6 +355,17 @@ export async function getDataStatus(): Promise<{
         asOf: stocks.d,
         served: stocks.n > 0,
         note: "BIST closes via Yahoo. Freshness is judged against the index's own trading calendar, so holidays aren't mistaken for gaps.",
+      },
+      {
+        name: "Monthly KAP holdings disclosure SLA",
+        coverage: monthlyHold
+          ? `Due month ${monthlyHold.period}: ${intFmt(monthlyHold.parsed)} / ${intFmt(monthlyHold.eligible)} parsed; ${intFmt(monthlyHold.pending)} pending; ${intFmt(monthlyHold.errors)} parser errors; ${intFmt(monthlyHold.unseen)} unseen`
+          : "No published monthly coverage ledger yet",
+        asOf: monthlyHold?.period ?? null,
+        served: !!monthlyHold,
+        note: monthlyHold
+          ? "The due month is assessed only after a 45-day publication grace period. Unseen means the crawler has not deterministically linked a KAP disclosure; it is not a zero holding and does not prove the manager did not file."
+          : "The first dedicated monthly KAP collection run will publish this per-fund ledger. Until then, all-history holdings coverage must not be read as current-month coverage.",
       },
       {
         name: "Fund stock-level holdings (KAP)",

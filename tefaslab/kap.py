@@ -20,7 +20,7 @@ import sqlite3
 import time
 import unicodedata
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 
 import pdfplumber
 import requests
@@ -97,6 +97,20 @@ CREATE TABLE IF NOT EXISTS kap_backfill_state (
     cursor      INTEGER NOT NULL,   -- lowest id scanned so far
     updated_at  TEXT
 );
+-- One row per in-scope fund for each monthly reporting period that has
+-- passed its publication grace window.  This is deliberately a coverage
+-- ledger, not an assertion that an unseen fund has no holdings or failed to
+-- publish: KAP discovery is imperfect, so `unseen` means exactly that.
+CREATE TABLE IF NOT EXISTS kap_monthly_status (
+    period      TEXT NOT NULL,           -- YYYY-MM, portfolio month
+    code        TEXT NOT NULL,
+    state       TEXT NOT NULL,           -- parsed|pending|error|unseen
+    disclosure_id INTEGER,
+    updated_at  TEXT NOT NULL,
+    PRIMARY KEY (period, code)
+);
+CREATE INDEX IF NOT EXISTS idx_kap_monthly_status_period
+    ON kap_monthly_status(period, state);
 """
 
 MAX_RETRY_ATTEMPTS = 3
@@ -434,6 +448,119 @@ def coverage_summary(conn: sqlite3.Connection) -> dict:
     }
 
 
+# ------------------------------------------------------ monthly coverage
+
+MONTHLY_PUBLICATION_GRACE_DAYS = 45
+
+
+def latest_due_period(as_of: date | None = None,
+                      grace_days: int = MONTHLY_PUBLICATION_GRACE_DAYS) -> str:
+    """Return the newest portfolio month whose publication window has closed.
+
+    A portfolio for month M is only considered due after the end of M plus a
+    generous grace period.  This prevents the UI and monitors from calling a
+    current-month report "missing" before managers have a reasonable chance
+    to publish it.
+    """
+    as_of = as_of or date.today()
+    first = as_of.replace(day=1)
+    # Walk backwards from the prior month. The loop is intentionally tiny but
+    # makes the month-end calculation correct across leap years and January.
+    for _ in range(24):
+        month_end = first - timedelta(days=1)
+        if as_of >= month_end + timedelta(days=grace_days):
+            return f"{month_end:%Y-%m}"
+        first = month_end.replace(day=1)
+    raise RuntimeError("could not determine a due holdings period")
+
+
+def refresh_monthly_status(conn: sqlite3.Connection, period: str | None = None,
+                           as_of: date | None = None) -> dict:
+    """Materialise per-fund monthly disclosure states for the public product.
+
+    The in-scope universe is intentionally limited to categories where a
+    security-level portfolio is decision-useful.  `unseen` is an observability
+    state: it means the KAP scanner has not deterministically linked a report,
+    *not* that the manager disclosed zero positions or necessarily failed to
+    file.  This distinction is central to a defensible coverage metric.
+    """
+    _ensure_schema(conn)
+    period = period or latest_due_period(as_of)
+    try:
+        year, month = (int(part) for part in period.split("-", 1))
+    except ValueError as err:
+        raise ValueError("period must be YYYY-MM") from err
+    if not 1 <= month <= 12:
+        raise ValueError("period must be YYYY-MM")
+
+    eligible = [row[0] for row in conn.execute(
+        f"SELECT code FROM funds WHERE category IN ({','.join('?' for _ in EQUITY_ORIENTED_CATEGORIES)})",
+        EQUITY_ORIENTED_CATEGORIES,
+    )]
+    parsed = {row[0] for row in conn.execute(
+        "SELECT DISTINCT code FROM fund_holdings WHERE period=?", (period,))}
+    reports: dict[str, tuple[int, str]] = {}
+    for code, did, status in conn.execute(
+        """
+        SELECT COALESCE(k.code, f.code) AS code, k.id, k.status
+        FROM kap_disclosures k
+        LEFT JOIN funds f ON f.title = k.fund_title
+        WHERE k.year=? AND k.period=?
+          AND COALESCE(k.code, f.code) IS NOT NULL
+        ORDER BY k.id DESC
+        """, (year, month)):
+        # Keep the newest deterministic report; a parsed book is resolved
+        # from fund_holdings above, while pending beats a terminal error so a
+        # later retry is never hidden behind an earlier parser failure.
+        if code not in reports or status in ("found", "retry"):
+            reports[code] = (int(did), str(status))
+
+    now = datetime_now_iso()
+    rows = []
+    for code in eligible:
+        did, status = reports.get(code, (None, "unseen"))
+        state = ("parsed" if code in parsed else
+                 "pending" if status in ("found", "retry") else
+                 "error" if status == "error" else "unseen")
+        rows.append((period, code, state, did, now))
+    conn.execute("DELETE FROM kap_monthly_status WHERE period=?", (period,))
+    conn.executemany(
+        "INSERT INTO kap_monthly_status(period, code, state, disclosure_id, updated_at) "
+        "VALUES (?,?,?,?,?)", rows)
+    conn.commit()
+    return monthly_status_summary(conn, period)
+
+
+def datetime_now_iso() -> str:
+    """One local helper keeps the SQLite coverage snapshot timestamp uniform."""
+    from datetime import datetime
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def monthly_status_summary(conn: sqlite3.Connection,
+                           period: str | None = None) -> dict:
+    """Return a compact monthly holdings SLA/coverage summary."""
+    _ensure_schema(conn)
+    period = period or latest_due_period()
+    rows = conn.execute(
+        "SELECT state, COUNT(*) FROM kap_monthly_status WHERE period=? GROUP BY state",
+        (period,)).fetchall()
+    counts = {state: int(n) for state, n in rows}
+    eligible = sum(counts.values())
+    latest = conn.execute("SELECT MAX(period) FROM fund_holdings").fetchone()[0]
+    return {
+        "period": period,
+        "eligible_funds": eligible,
+        "parsed_funds": counts.get("parsed", 0),
+        "pending_funds": counts.get("pending", 0),
+        "error_funds": counts.get("error", 0),
+        "unseen_funds": counts.get("unseen", 0),
+        "latest_parsed_period": latest,
+        "capture_rate": round(100 * counts.get("parsed", 0) / eligible, 1)
+        if eligible else None,
+    }
+
+
 # --------------------------------------------------------------- parse
 
 def _resolve_fund_code(
@@ -645,6 +772,28 @@ def daily_update(conn: sqlite3.Connection, max_ids: int = 5000) -> dict:
     # reason and are retried automatically only when the download was transient.
     out["legacy_errors"] = requeue_legacy_errors(conn, limit=50)
     out.update(parse_pending(conn, limit=300))
+    out["monthly_coverage"] = refresh_monthly_status(conn)
+    return out
+
+
+def collect_monthly(conn: sqlite3.Connection, period: str | None = None,
+                    max_ids: int = 5000) -> dict:
+    """Run the bounded monthly-disclosure collection path.
+
+    KAP's public search API is bot-protected, so there is no trustworthy
+    per-fund/month endpoint to scrape. This keeps the sequential scanner as
+    the source of discovery, but isolates it from the wider market refresh
+    and prioritises parsing disclosures for the latest due portfolio month.
+    The resulting ledger makes unseen and parser-error funds explicit.
+    """
+    _ensure_schema(conn)
+    period = period or latest_due_period()
+    if _get_cursor(conn) <= 0:
+        raise RuntimeError("no KAP frontier yet — seed the scanner before monthly collection")
+    out = scan_forward(conn, budget=max_ids)
+    out.update(parse_pending(conn, limit=250, period=period))
+    out["monthly_coverage"] = refresh_monthly_status(conn, period)
+    print("  monthly holdings coverage:", out["monthly_coverage"])
     return out
 
 
@@ -690,8 +839,9 @@ def _fetch_disclosure(s: requests.Session, did: int,
 
 
 def parse_pending(conn: sqlite3.Connection, limit: int = 50,
-                  session: requests.Session | None = None) -> dict:
-    """Resolve + parse newly found and transient-retry disclosures."""
+                  session: requests.Session | None = None,
+                  period: str | None = None) -> dict:
+    """Resolve + parse newly found/retry disclosures, optionally for a month."""
     _ensure_schema(conn)
     s = session or requests.Session()
     known_codes = {c for (c,) in conn.execute("SELECT code FROM funds")}
@@ -702,11 +852,21 @@ def parse_pending(conn: sqlite3.Connection, limit: int = 50,
         normalised_titles[_normalise_title(title)].add(code)
     aliases = {title: code for title, code in conn.execute(
         "SELECT kap_title, code FROM kap_fund_aliases")}
+    where = "WHERE status IN ('found', 'retry')"
+    params: list[object] = []
+    if period:
+        try:
+            year, month = (int(part) for part in period.split("-", 1))
+        except ValueError as err:
+            raise ValueError("period must be YYYY-MM") from err
+        where += " AND year=? AND period=?"
+        params.extend((year, month))
+    params.append(limit)
     rows = conn.execute(
         "SELECT id, fund_title, year, period, attempts FROM kap_disclosures "
-        "WHERE status IN ('found', 'retry') "
+        f"{where} "
         "ORDER BY CASE status WHEN 'found' THEN 0 ELSE 1 END, id DESC LIMIT ?",
-        (limit,)).fetchall()
+        params).fetchall()
     ok = retry = err = 0
     for did, fund_title, year, per, attempts in rows:
         attempts = int(attempts or 0) + 1

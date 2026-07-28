@@ -83,6 +83,13 @@ History accumulates forward from Apr-2026; coverage grows nightly.*
 Scanner ledger: one row per discovered portfolio-report disclosure
 (id, fund_title, year, period, obj_id, status found/parsed/error).
 
+### kap_monthly_status
+
+Per-fund coverage ledger for the latest portfolio month whose 45-day
+publication grace has elapsed. `state` is one of `parsed`, `pending`, `error`,
+or `unseen`; `unseen` means no deterministic KAP link has been collected, not
+zero holdings or proven non-filing.
+
 ## Presentation tables (rebuilt nightly, never edited)
 
 | Table | Purpose | Built from |

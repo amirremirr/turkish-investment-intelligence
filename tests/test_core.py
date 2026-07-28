@@ -411,6 +411,55 @@ def test_kap_coverage_summary_classifies_missing_books(tmp_conn):
     assert out["equity_oriented_parsed"] == 1
 
 
+def test_kap_monthly_status_tracks_due_month_without_claiming_zero(tmp_conn):
+    """Monthly coverage must distinguish parsed, pending, error and unseen."""
+    from tefaslab import kap
+
+    tmp_conn.executescript(kap.SCHEMA)
+    tmp_conn.executemany(
+        "INSERT INTO funds VALUES (?,?,?,?)",
+        [
+            ("AAA", "Alpha Fund", "YAT", "Equity Turkey"),
+            ("BBB", "Beta Fund", "YAT", "Foreign Equity"),
+            ("CCC", "Gamma Fund", "YAT", "Mixed"),
+            ("DDD", "Cash Fund", "YAT", "Money Market"),
+        ],
+    )
+    tmp_conn.execute(
+        "INSERT INTO fund_holdings (code, period, isin) VALUES "
+        "('AAA', '2026-05', 'TR0000000001')"
+    )
+    tmp_conn.executemany(
+        "INSERT INTO kap_disclosures (id, fund_title, year, period, status) "
+        "VALUES (?,?,?,?,?)",
+        [(1, "Beta Fund", 2026, 5, "found"),
+         (2, "Gamma Fund", 2026, 5, "error")],
+    )
+    tmp_conn.commit()
+
+    out = kap.refresh_monthly_status(tmp_conn, "2026-05")
+    assert out["eligible_funds"] == 3
+    assert out["parsed_funds"] == 1
+    assert out["pending_funds"] == 1
+    assert out["error_funds"] == 1
+    assert out["unseen_funds"] == 0
+    assert out["capture_rate"] == pytest.approx(33.3)
+    # The money-market fund is not silently called "missing" because it is
+    # outside the security-holdings product scope.
+    assert tmp_conn.execute(
+        "SELECT COUNT(*) FROM kap_monthly_status WHERE code='DDD'").fetchone()[0] == 0
+
+
+def test_kap_due_month_respects_publication_grace_period():
+    from tefaslab import kap
+
+    # May closes on May 31; its 45-day grace window closes on July 15.
+    assert kap.latest_due_period(date(2026, 7, 29)) == "2026-05"
+    # A date before that boundary must still point to the prior completed
+    # reporting month rather than calling the May disclosure late.
+    assert kap.latest_due_period(date(2026, 7, 14)) == "2026-04"
+
+
 def test_kap_title_resolution_is_normalised_but_never_fuzzy(tmp_conn):
     from tefaslab import kap
 

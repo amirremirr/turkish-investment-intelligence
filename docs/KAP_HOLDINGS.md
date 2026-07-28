@@ -13,6 +13,7 @@ production ([tefaslab/kap.py](../tefaslab/kap.py)).*
 | Table parser (`parse_pdf_holdings`) | ✅ working — position-based row reconstruction; on the test fund: 89/89 holdings, 0 missing values, **weights sum to 98.1%** (rest is cash) |
 | `fund_holdings` table + `kap_disclosures` ledger | ✅ in the shared DB |
 | Coverage audit | ✅ classifies every fund as parsed, linked-pending, parser-error, or no resolved KAP report; shown on the public data-status page |
+| Monthly disclosure SLA | ✅ per-fund ledger for the latest due month: parsed, pending, parser error, or unseen; a 45-day publication grace applies |
 | Recovery queue | ✅ transient downloads retry up to three times; legacy failures receive one controlled retry; terminal parser errors retain their reason |
 | Title resolution | ✅ PDF code, exact title, unique normalised title, and operator-reviewed aliases; never fuzzy-matched |
 | Queries: `holdings who ASELS`, `holdings fund IJZ`, `holdings stats` | ✅ CLI |
@@ -135,6 +136,20 @@ daily:  scan new ids ──▶ filter "Portföy Dağılım Raporu"
 - **History**: enumeration only works forward (plus whatever recent
   ID ranges are scanned retroactively). Holdings history accumulates
   from the start date — a reason to start the scanner early.
+
+## Monthly disclosure SLA
+
+The product measures the latest portfolio month whose reporting window has
+closed (month end plus 45 days), not an arbitrary all-history maximum. For
+each in-scope equity, foreign-equity, mixed, or variable fund the ledger holds
+one of: `parsed`, `pending`, `error`, or `unseen`.
+
+`unseen` is intentionally not a non-filing or zero-holdings assertion. KAP's
+public fund/month search route is bot-protected, so discovery remains the
+bounded sequential scanner. A dedicated collector runs at 11:30 Istanbul on
+calendar days 15–20, prioritises the due month, and publishes the status ledger.
+The ordinary daily scan and Tue/Thu/Sun historical backfill remain the fallback
+recovery paths.
 
 ## What this unlocks (in order)
 

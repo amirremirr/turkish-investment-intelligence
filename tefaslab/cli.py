@@ -235,6 +235,12 @@ def cmd_holdings(args) -> None:
     elif args.action == "backfill":
         out = kap.scan_backward(conn, budget=args.count)
         print(out)
+    elif args.action == "monthly":
+        out = kap.collect_monthly(conn, period=args.period, max_ids=args.count)
+        # The dedicated workflow rebuilds/publishes presentation data without
+        # calling pipeline.update_raw(), so persist its SLA result explicitly.
+        pipeline._status(conn, "kap_monthly_coverage", out["monthly_coverage"])
+        print(out)
     elif args.action == "reparse":
         out = kap.reparse(conn, limit=args.count)
         print(out)
@@ -287,6 +293,15 @@ def cmd_holdings(args) -> None:
               "cursor must keep advancing for new months to arrive")
         print(f"backfill floor: {back} (earliest known report id: {lo}) — "
               "walks DOWN to recover older periods")
+        monthly = kap.monthly_status_summary(conn)
+        print(
+            "monthly due period: "
+            f"{monthly['period']} — {monthly['parsed_funds']}/"
+            f"{monthly['eligible_funds']} parsed ({monthly['capture_rate']}%) | "
+            f"{monthly['pending_funds']} pending | "
+            f"{monthly['error_funds']} parser errors | "
+            f"{monthly['unseen_funds']} unseen"
+        )
     elif args.action == "crowding":
         t = ownership.crowding(conn)
         print(f"period {t.attrs['period']} · "
@@ -578,11 +593,12 @@ def main() -> None:
 
     p = sub.add_parser("holdings", help="KAP fund holdings pipeline")
     p.add_argument("action", choices=["scan", "parse", "reparse", "retry", "alias", "errors",
-                                      "backfill", "who", "fund", "stats",
+                                      "backfill", "monthly", "who", "fund", "stats",
                                       "crowding", "active", "attrib"])
     p.add_argument("arg", nargs="?", help="ticker (who) / fund code (fund)")
     p.add_argument("--start", type=int, help="scan start id")
     p.add_argument("--count", type=int, default=100)
+    p.add_argument("--period", help="portfolio period YYYY-MM (monthly action)")
     p.add_argument("--title", help="KAP title for the operator-reviewed alias action")
     p.add_argument("--note", help="optional rationale recorded with a KAP title alias")
     p.set_defaults(func=cmd_holdings)

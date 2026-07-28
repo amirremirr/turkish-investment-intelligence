@@ -179,6 +179,39 @@ def main() -> int:
     else:
         add(WARN, "kap discovery", "no kap_holdings status yet")
 
+    # 10. Monthly holdings SLA — all-history holdings coverage can rise while
+    # the latest due month remains missing, so monitor the materialised
+    # per-fund month ledger separately. This is a warning rather than a hard
+    # failure: KAP's publication schedule and parser recovery are external
+    # dependencies, but an operator must be able to see the gap immediately.
+    monthly = status_row("kap_monthly_coverage")
+    if monthly:
+        import json
+        try:
+            m = json.loads(monthly[0])
+            eligible = int(m.get("eligible_funds") or 0)
+            parsed = int(m.get("parsed_funds") or 0)
+            period = m.get("period")
+            latest = m.get("latest_parsed_period")
+            rate = m.get("capture_rate")
+            if not eligible:
+                add(WARN, "KAP monthly holdings",
+                    "no in-scope fund ledger yet")
+            elif latest is None or (period and latest < period):
+                add(WARN, "KAP monthly holdings",
+                    f"latest parsed {latest or 'none'}; due period {period} "
+                    f"is not yet covered ({parsed}/{eligible}, {rate}%)")
+            else:
+                add(OK if (rate or 0) >= 85 else WARN, "KAP monthly holdings",
+                    f"due {period}: {parsed}/{eligible} parsed ({rate}%) · "
+                    f"{m.get('pending_funds', 0)} pending · "
+                    f"{m.get('error_funds', 0)} parser errors · "
+                    f"{m.get('unseen_funds', 0)} unseen")
+        except Exception as e:
+            add(WARN, "KAP monthly holdings", f"unparseable status: {e}")
+    else:
+        add(WARN, "KAP monthly holdings", "no monthly coverage status yet")
+
     conn.close()
     engine.dispose()
 
