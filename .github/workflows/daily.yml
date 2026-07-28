@@ -6,12 +6,16 @@ on:
     - cron: "30 15 * * 1-5"
     # 06:30 Istanbul Tue/Thu/Sun: bounded historical KAP holdings recovery.
     - cron: "30 3 * * 0,2,4"
+    # One 60–90 minute MKK recovery job at 11:30 Istanbul during the filing
+    # window. It walks backward through a distinct slice each day and the
+    # client enforces the provider's six-calls-per-minute limit.
+    - cron: "30 8 1-15 * *"
   workflow_dispatch:
     inputs:
       mode:
         description: "daily = incremental · bootstrap = full rebuild (~2h) · reparse = re-run KAP parser · backfill = walk KAP ids backward for older periods"
         type: choice
-        options: [daily, bootstrap, reparse, backfill]
+        options: [daily, monthly, bootstrap, reparse, backfill]
         default: daily
 
 concurrency:
@@ -24,6 +28,8 @@ jobs:
     timeout-minutes: 300
     env:
       EVDS_API_KEY: ${{ secrets.EVDS_API_KEY }}
+      MKK_USERNAME: ${{ secrets.MKK_USERNAME }}
+      MKK_PASSWORD: ${{ secrets.MKK_PASSWORD }}
       SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
       REQUIRE_SUPABASE_PUBLISH: "true"
       PYTHONIOENCODING: utf-8
@@ -102,12 +108,28 @@ jobs:
           python -m tefaslab daily --skip-raw
           python -m tefaslab publish
 
+      - name: Collect latest due monthly KAP holdings
+        if: >-
+          github.event.inputs.mode == 'monthly' ||
+          github.event.schedule == '30 8 1-15 * *'
+        run: |
+          test -f data/funds.db || {
+            echo "::error::No database in cache — run mode=bootstrap first"; exit 1; }
+          # This path is deliberately narrow: it advances the bounded KAP
+          # scanner, prioritises the latest due report month, then publishes
+          # a per-fund monthly coverage ledger for the public status page.
+          python -m tefaslab holdings monthly --count 5000
+          python -m tefaslab holdings stats
+          python -m tefaslab daily --skip-raw
+
       - name: Daily run
         if: >-
           github.event.inputs.mode != 'bootstrap' &&
+          github.event.inputs.mode != 'monthly' &&
           github.event.inputs.mode != 'reparse' &&
           github.event.inputs.mode != 'backfill' &&
-          github.event.schedule != '30 3 * * 0,2,4'
+          github.event.schedule != '30 3 * * 0,2,4' &&
+          github.event.schedule != '30 8 1-15 * *'
         run: |
           test -f data/funds.db || {
             echo "::error::No database in cache — run this workflow "\
@@ -117,9 +139,11 @@ jobs:
       - name: Monthly intelligence report (1st weekday of month)
         if: >-
           github.event.inputs.mode != 'bootstrap' &&
+          github.event.inputs.mode != 'monthly' &&
           github.event.inputs.mode != 'reparse' &&
           github.event.inputs.mode != 'backfill' &&
-          github.event.schedule != '30 3 * * 0,2,4'
+          github.event.schedule != '30 3 * * 0,2,4' &&
+          github.event.schedule != '30 8 1-15 * *'
         run: |
           if [ "$(date +%d)" -le 03 ]; then
             python -m tefaslab report

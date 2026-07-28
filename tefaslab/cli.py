@@ -235,6 +235,25 @@ def cmd_holdings(args) -> None:
     elif args.action == "backfill":
         out = kap.scan_backward(conn, budget=args.count)
         print(out)
+    elif args.action == "monthly":
+        out = kap.collect_monthly(conn, period=args.period, max_ids=args.count)
+        # The dedicated workflow rebuilds/publishes presentation data without
+        # calling pipeline.update_raw(), so persist its SLA result explicitly.
+        pipeline._status(conn, "kap_monthly_coverage", out["monthly_coverage"])
+        print(out)
+    elif args.action == "mkk-sync":
+        print(kap.sync_mkk_funds(conn))
+    elif args.action == "mkk":
+        # Keep an interactive MKK probe bounded even when the generic
+        # holdings --count default is used; the provider permits 6 calls/min.
+        from . import mkk
+        client = mkk.MKKClient()
+        out = kap.discover_mkk_disclosures(
+            conn, batches=min(args.count, 12), detail_limit=args.details,
+            client=client)
+        out["parse"] = kap.parse_mkk_pending(
+            conn, limit=args.parse_limit, client=client)
+        print(out)
     elif args.action == "reparse":
         out = kap.reparse(conn, limit=args.count)
         print(out)
@@ -247,6 +266,11 @@ def cmd_holdings(args) -> None:
             raise ValueError("holdings alias needs a fund code and --title")
         kap.set_title_alias(conn, args.title, args.arg, args.note)
         print(f"alias saved: {args.title!r} -> {args.arg.upper()}")
+    elif args.action == "scope":
+        if not args.arg or not args.eligibility or not args.note:
+            raise ValueError("holdings scope needs a fund code, --eligibility, and --note")
+        kap.set_holdings_scope(conn, args.arg, args.eligibility, args.note, args.evidence)
+        print(f"monthly holdings scope saved: {args.arg.upper()} -> {args.eligibility}")
     elif args.action == "errors":
         rows = kap.error_report(conn, limit=args.count)
         text = pd.DataFrame(rows).to_string(index=False) if rows else "no terminal errors"
@@ -287,6 +311,15 @@ def cmd_holdings(args) -> None:
               "cursor must keep advancing for new months to arrive")
         print(f"backfill floor: {back} (earliest known report id: {lo}) — "
               "walks DOWN to recover older periods")
+        monthly = kap.monthly_status_summary(conn)
+        print(
+            "monthly due period: "
+            f"{monthly['period']} — {monthly['parsed_funds']}/"
+            f"{monthly['eligible_funds']} parsed ({monthly['capture_rate']}%) | "
+            f"{monthly['pending_funds']} pending | "
+            f"{monthly['error_funds']} parser errors | "
+            f"{monthly['unseen_funds']} unseen"
+        )
     elif args.action == "crowding":
         t = ownership.crowding(conn)
         print(f"period {t.attrs['period']} · "
@@ -577,14 +610,22 @@ def main() -> None:
     p.set_defaults(func=cmd_intraday_cloud)
 
     p = sub.add_parser("holdings", help="KAP fund holdings pipeline")
-    p.add_argument("action", choices=["scan", "parse", "reparse", "retry", "alias", "errors",
-                                      "backfill", "who", "fund", "stats",
+    p.add_argument("action", choices=["scan", "parse", "reparse", "retry", "alias", "scope", "errors",
+                                      "backfill", "monthly", "mkk", "mkk-sync", "who", "fund", "stats",
                                       "crowding", "active", "attrib"])
     p.add_argument("arg", nargs="?", help="ticker (who) / fund code (fund)")
     p.add_argument("--start", type=int, help="scan start id")
     p.add_argument("--count", type=int, default=100)
+    p.add_argument("--period", help="portfolio period YYYY-MM (monthly action)")
+    p.add_argument("--details", type=int, default=30,
+                   help="MKK disclosure-detail requests (quota-limited)")
+    p.add_argument("--parse-limit", type=int, default=4,
+                   help="MKK report attachments to parse")
     p.add_argument("--title", help="KAP title for the operator-reviewed alias action")
     p.add_argument("--note", help="optional rationale recorded with a KAP title alias")
+    p.add_argument("--eligibility", choices=["expected", "unknown", "exempt"],
+                   help="monthly holdings filing eligibility for scope action")
+    p.add_argument("--evidence", help="supporting public/legal URL for scope action")
     p.set_defaults(func=cmd_holdings)
 
     p = sub.add_parser("evds", help="fetch TCMB macro series (needs "

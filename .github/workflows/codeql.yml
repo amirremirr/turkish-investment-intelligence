@@ -8,11 +8,17 @@ on:
     - cron: "20 3 * * 1"
 
 permissions:
+  actions: read
   contents: read
   security-events: write
 
 jobs:
   analyze:
+    # Private repositories need GitHub Code Security before SARIF upload can
+    # succeed. Keep the workflow opt-in until that entitlement is enabled;
+    # CI remains the required merge gate rather than producing a false-red
+    # CodeQL result on every PR.
+    if: vars.CODEQL_ENABLED == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

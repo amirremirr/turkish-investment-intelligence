@@ -411,6 +411,155 @@ def test_kap_coverage_summary_classifies_missing_books(tmp_conn):
     assert out["equity_oriented_parsed"] == 1
 
 
+def test_kap_monthly_status_tracks_due_month_without_claiming_zero(tmp_conn):
+    """Monthly coverage must distinguish parsed, pending, error and unseen."""
+    from tefaslab import kap
+
+    tmp_conn.executescript(kap.SCHEMA)
+    tmp_conn.executemany(
+        "INSERT INTO funds VALUES (?,?,?,?)",
+        [
+            ("AAA", "Alpha Fund", "YAT", "Equity Turkey"),
+            ("BBB", "Beta Fund", "YAT", "Foreign Equity"),
+            ("CCC", "Gamma Fund", "YAT", "Mixed"),
+            ("DDD", "Cash Fund", "YAT", "Money Market"),
+        ],
+    )
+    tmp_conn.execute(
+        "INSERT INTO fund_holdings (code, period, isin) VALUES "
+        "('AAA', '2026-05', 'TR0000000001')"
+    )
+    kap.set_holdings_scope(tmp_conn, "DDD", "unknown", "eligibility not yet reviewed")
+    tmp_conn.executemany(
+        "INSERT INTO kap_disclosures (id, fund_title, year, period, status) "
+        "VALUES (?,?,?,?,?)",
+        [(1, "Beta Fund", 2026, 5, "found"),
+         (2, "Gamma Fund", 2026, 5, "error")],
+    )
+    tmp_conn.commit()
+
+    out = kap.refresh_monthly_status(tmp_conn, "2026-05")
+    assert out["eligible_funds"] == 3
+    assert out["parsed_funds"] == 1
+    assert out["pending_funds"] == 1
+    assert out["error_funds"] == 1
+    assert out["unseen_funds"] == 0
+    assert out["unknown_funds"] == 1
+    assert out["capture_rate"] == pytest.approx(33.3)
+    # Unknown eligibility is visible but stays outside the expected-reporter
+    # denominator until an operator attaches regulatory evidence.
+    assert tmp_conn.execute(
+        "SELECT eligibility FROM kap_monthly_status WHERE code='DDD'").fetchone()[0] == "unknown"
+
+
+def test_kap_due_month_respects_publication_grace_period():
+    from tefaslab import kap
+
+    # KAP fund profiles commonly schedule reports in days 1–10. The 15-day
+    # operating grace means June is due by July 29, while on July 14 May is
+    # still the newest completed reporting month.
+    assert kap.latest_due_period(date(2026, 7, 29)) == "2026-06"
+    assert kap.latest_due_period(date(2026, 7, 14)) == "2026-05"
+    assert kap.latest_collection_period(date(2026, 7, 1)) == "2026-06"
+
+
+def test_mkk_discovery_uses_checkpoint_and_subject_not_fund_type(tmp_conn):
+    from tefaslab import kap
+
+    class Client:
+        def last_disclosure_index(self):
+            return 101
+
+        def disclosures(self, cursor):
+            assert cursor == 52
+            return [
+                {"disclosureIndex": 100, "fundCode": "AAA", "fundId": "1",
+                 "title": "Alpha", "subReportIds": [], "acceptedDataFileTypes": ["data"]},
+                {"disclosureIndex": 101, "fundCode": "AAA", "fundId": "1",
+                 "title": "Alpha", "subReportIds": [], "acceptedDataFileTypes": ["data"]},
+            ]
+
+        def disclosure_detail(self, did):
+            if did == 101:
+                return {"subject": {"tr": "Portföy Dağılım Raporu"},
+                        "period": "01.06.2026 - 30.06.2026",
+                        "time": "03.07.2026 10:00:00",
+                        "attachmentUrls": [{"url": "https://x/downloadAttachment/a"}]}
+            return {"subject": {"tr": "İhraç Belgesi"}, "attachmentUrls": []}
+
+    tmp_conn.executescript(kap.SCHEMA)
+    tmp_conn.execute("INSERT INTO funds VALUES ('AAA', 'Alpha', 'YAT', 'Equity Turkey')")
+    out = kap.discover_mkk_disclosures(tmp_conn, batches=1, detail_limit=2,
+                                       client=Client())
+    assert out["listed"] == 2 and out["portfolio_reports"] == 1
+    report = tmp_conn.execute(
+        "SELECT status, reporting_period FROM mkk_disclosures WHERE disclosure_index=101"
+    ).fetchone()
+    assert report == ("found", "2026-06")
+    monthly = kap.refresh_monthly_status(tmp_conn, "2026-06")
+    assert monthly["pending_funds"] == 1 and monthly["unseen_funds"] == 0
+    assert tmp_conn.execute("SELECT cursor FROM mkk_scan_state WHERE id=1").fetchone()[0] == 102
+
+
+def test_mkk_monthly_collector_walks_backward_not_only_latest_page(tmp_conn):
+    from tefaslab import kap
+
+    class Client:
+        def last_disclosure_index(self):
+            return 250
+
+        def disclosures(self, start):
+            return [
+                {"disclosureIndex": did, "fundCode": "AAA", "fundId": "1",
+                 "title": "Alpha", "subReportIds": [], "acceptedDataFileTypes": []}
+                for did in range(start, start + 50)
+            ]
+
+    tmp_conn.executescript(kap.SCHEMA)
+    tmp_conn.execute("INSERT INTO funds VALUES ('AAA', 'Alpha', 'YAT', 'Equity Turkey')")
+    first = kap.discover_mkk_monthly(tmp_conn, "2026-06", batches=2,
+                                     detail_limit=0, client=Client())
+    # First page is 201..250, then the collector moves to 151..200 instead
+    # of advancing beyond 250 and repeatedly inspecting the newest 50.
+    assert first["head_index"] == 250 and first["cursor"] == 101
+    second = kap.discover_mkk_monthly(tmp_conn, "2026-06", batches=1,
+                                      detail_limit=0, client=Client())
+    assert second["cursor"] == 51
+    assert tmp_conn.execute("SELECT COUNT(*) FROM mkk_disclosures").fetchone()[0] == 150
+
+
+def test_mkk_parse_replaces_monthly_snapshot_and_records_provenance(tmp_conn, monkeypatch):
+    from tefaslab import kap
+
+    class Client:
+        def download_attachment(self, url):
+            assert url.endswith("attachment-1")
+            return b"prefix%PDF mock"
+
+    tmp_conn.executescript(kap.SCHEMA)
+    tmp_conn.execute("INSERT INTO funds VALUES ('AAA', 'Alpha', 'YAT', 'Equity Turkey')")
+    tmp_conn.execute("INSERT INTO fund_holdings(code, period, isin) VALUES "
+                     "('AAA', '2026-06', 'OLD')")
+    tmp_conn.execute(
+        "INSERT INTO mkk_disclosures(disclosure_index, fund_code, reporting_period, "
+        "published_at, attachment_urls, status, checked_at) VALUES (?,?,?,?,?,?,?)",
+        (99, "AAA", "2026-06", "03.07.2026 10:00:00",
+         '[{"url": "https://x/downloadAttachment/attachment-1"}]', "found", "now"),
+    )
+    monkeypatch.setattr(kap, "parse_pdf_holdings", lambda _: ("AAA", [{
+        "isin": "TR0000000001", "ticker": "AAA", "name": "Alpha", "quantity": 1,
+        "value": 2, "weight_pct": 3,
+    }]))
+    out = kap.parse_mkk_pending(tmp_conn, limit=1, client=Client())
+    assert out == {"parsed": 1, "errors": 0}
+    rows = tmp_conn.execute(
+        "SELECT isin, source, attachment_id, attachment_sha256, parser_version "
+        "FROM fund_holdings WHERE code='AAA' AND period='2026-06'").fetchall()
+    assert len(rows) == 1 and rows[0][0] == "TR0000000001"
+    assert rows[0][1] == "mkk-api" and rows[0][2] == "attachment-1"
+    assert len(rows[0][3]) == 64 and rows[0][4] == kap.MKK_PARSER_VERSION
+
+
 def test_kap_title_resolution_is_normalised_but_never_fuzzy(tmp_conn):
     from tefaslab import kap
 

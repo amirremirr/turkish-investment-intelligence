@@ -19,14 +19,18 @@ const globalForDb = globalThis as unknown as {
 // pooler handles the aggregate count. (max: 1 caused multi-query pages
 // to hang; the session pooler on 5432 caps clients at 15 and is the
 // wrong mode here.)
+// Reuse one client per Node process in every environment. During Vercel
+// prerendering, separate route imports can otherwise create several five-slot
+// pools and exhaust a Supabase session pool capped at 15 clients.
+const usesTransactionPooler = /(?:pooler\.supabase\.com|pooler\.supabase\.co):6543/.test(url);
 export const sql =
   globalForDb.sql ??
   postgres(url, {
     ssl: "require",
-    prepare: false, // required for the transaction pooler
-    max: 5,
+    prepare: false,
+    max: usesTransactionPooler ? 5 : 1,
     idle_timeout: 10,
     connect_timeout: 15,
   });
 
-if (process.env.NODE_ENV !== "production") globalForDb.sql = sql;
+globalForDb.sql = sql;

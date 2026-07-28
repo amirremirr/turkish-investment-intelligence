@@ -15,17 +15,20 @@ Enumeration is forward-only: history accumulates from the first scan.
 from __future__ import annotations
 
 import io
+import hashlib
+import json
 import re
 import sqlite3
 import time
 import unicodedata
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 
 import pdfplumber
 import requests
 
 from . import db
+from . import mkk
 
 H = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
      "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"}
@@ -73,6 +76,11 @@ CREATE TABLE IF NOT EXISTS fund_holdings (
     value       REAL,                    -- market value, TRY
     weight_pct  REAL,                    -- % of fund total value
     disclosure_id INTEGER,
+    source      TEXT NOT NULL DEFAULT 'kap-public',
+    attachment_id TEXT,
+    attachment_sha256 TEXT,
+    parser_version TEXT,
+    published_at TEXT,
     PRIMARY KEY (code, period, isin)
 );
 CREATE INDEX IF NOT EXISTS idx_holdings_isin ON fund_holdings(isin);
@@ -97,6 +105,83 @@ CREATE TABLE IF NOT EXISTS kap_backfill_state (
     cursor      INTEGER NOT NULL,   -- lowest id scanned so far
     updated_at  TEXT
 );
+-- One row per in-scope fund for each monthly reporting period that has
+-- passed its publication grace window.  This is deliberately a coverage
+-- ledger, not an assertion that an unseen fund has no holdings or failed to
+-- publish: KAP discovery is imperfect, so `unseen` means exactly that.
+CREATE TABLE IF NOT EXISTS kap_monthly_status (
+    period      TEXT NOT NULL,           -- YYYY-MM, portfolio month
+    code        TEXT NOT NULL,
+    state       TEXT NOT NULL,           -- parsed|pending|error|unseen|exempt
+    eligibility TEXT NOT NULL DEFAULT 'expected', -- expected|unknown|exempt
+    eligibility_reason TEXT,
+    disclosure_id INTEGER,
+    updated_at  TEXT NOT NULL,
+    PRIMARY KEY (period, code)
+);
+CREATE INDEX IF NOT EXISTS idx_kap_monthly_status_period
+    ON kap_monthly_status(period, state);
+-- Operator-reviewed exceptions to the default TEFAS-public-fund roster.
+-- An exemption requires a reason/evidence; absence of a report alone is never
+-- sufficient evidence to add a fund here.
+CREATE TABLE IF NOT EXISTS fund_holdings_scope (
+    code        TEXT PRIMARY KEY,
+    eligibility TEXT NOT NULL CHECK (eligibility IN ('expected','unknown','exempt')),
+    reason      TEXT NOT NULL,
+    evidence_url TEXT,
+    updated_at  TEXT NOT NULL
+);
+-- Official MKK index and immutable provenance.  MKK disclosure indexes are
+-- not assumed to be interchangeable with KAP's public notification ids.
+CREATE TABLE IF NOT EXISTS mkk_funds (
+    code        TEXT PRIMARY KEY,
+    fund_id     TEXT,
+    title       TEXT,
+    fund_type   TEXT,
+    fund_class  TEXT,
+    fund_state  TEXT,
+    kap_url     TEXT,
+    fetched_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mkk_disclosures (
+    disclosure_index INTEGER PRIMARY KEY,
+    fund_code   TEXT,
+    fund_id     TEXT,
+    title       TEXT,
+    sub_report_ids TEXT,
+    accepted_file_types TEXT,
+    subject     TEXT,
+    reporting_period TEXT,
+    published_at TEXT,
+    attachment_urls TEXT,
+    detail_json TEXT,
+    status      TEXT NOT NULL DEFAULT 'indexed',
+                -- indexed|ignored|found|parsed|error
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    last_error  TEXT,
+    checked_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mkk_disclosures_status
+    ON mkk_disclosures(status, disclosure_index);
+CREATE INDEX IF NOT EXISTS idx_mkk_disclosures_period
+    ON mkk_disclosures(fund_code, reporting_period, disclosure_index);
+CREATE TABLE IF NOT EXISTS mkk_scan_state (
+    id          INTEGER PRIMARY KEY CHECK (id = 1),
+    cursor      INTEGER NOT NULL,
+    last_index  INTEGER,
+    updated_at  TEXT NOT NULL
+);
+-- The monthly collector walks backwards from the MKK head through the actual
+-- filing window. It is intentionally separate from the small forward cursor
+-- used by an interactive live probe.
+CREATE TABLE IF NOT EXISTS mkk_monthly_scan_state (
+    period      TEXT PRIMARY KEY,        -- portfolio period YYYY-MM
+    cursor      INTEGER NOT NULL,        -- first id of next older 50-id page
+    head_index  INTEGER NOT NULL,        -- MKK index at the start of collection
+    live_cursor INTEGER NOT NULL,        -- first unseen newer id after head
+    exhausted   INTEGER NOT NULL DEFAULT 0,
+    updated_at  TEXT NOT NULL
+);
 """
 
 MAX_RETRY_ATTEMPTS = 3
@@ -119,6 +204,28 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     ):
         if name not in columns:
             conn.execute(f"ALTER TABLE kap_disclosures ADD COLUMN {name} {definition}")
+    holding_columns = {row[1] for row in conn.execute("PRAGMA table_info(fund_holdings)")}
+    for name, definition in (
+        ("source", "TEXT NOT NULL DEFAULT 'kap-public'"),
+        ("attachment_id", "TEXT"),
+        ("attachment_sha256", "TEXT"),
+        ("parser_version", "TEXT"),
+        ("published_at", "TEXT"),
+    ):
+        if name not in holding_columns:
+            conn.execute(f"ALTER TABLE fund_holdings ADD COLUMN {name} {definition}")
+    monthly_columns = {row[1] for row in conn.execute("PRAGMA table_info(kap_monthly_status)")}
+    for name, definition in (
+        ("eligibility", "TEXT NOT NULL DEFAULT 'expected'"),
+        ("eligibility_reason", "TEXT"),
+    ):
+        if name not in monthly_columns:
+            conn.execute(f"ALTER TABLE kap_monthly_status ADD COLUMN {name} {definition}")
+    monthly_scan_columns = {row[1] for row in conn.execute(
+        "PRAGMA table_info(mkk_monthly_scan_state)")}
+    if "live_cursor" not in monthly_scan_columns:
+        conn.execute("ALTER TABLE mkk_monthly_scan_state "
+                     "ADD COLUMN live_cursor INTEGER NOT NULL DEFAULT 0")
     conn.commit()
 
 
@@ -434,6 +541,528 @@ def coverage_summary(conn: sqlite3.Connection) -> dict:
     }
 
 
+# ---------------------------------------------------------- MKK discovery
+
+MKK_BATCH_SIZE = 50
+MKK_PARSER_VERSION = "mkk-pdf-v1"
+
+
+def _mkk_period(value: object) -> str | None:
+    """Normalise a disclosure reporting period to ``YYYY-MM`` when explicit.
+
+    MKK returns this field in different shapes for different disclosure
+    templates.  We only infer a period from an unambiguous ISO/Turkish date;
+    an absent or ambiguous period stays unresolved rather than being silently
+    assigned to the month when the notification happened to be collected.
+    """
+    if value is None:
+        return None
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    match = re.search(r"\b((?:19|20)\d{2})[-/.]([01]?\d)\b", text)
+    if match and 1 <= int(match.group(2)) <= 12:
+        return f"{int(match.group(1)):04d}-{int(match.group(2)):02d}"
+    dates = re.findall(r"\b([0-3]?\d)[./-]([01]?\d)[./-]((?:19|20)\d{2})\b", text)
+    if dates:
+        # A period range's end date is the reporting month; a single date is
+        # also a much stronger signal than the collection timestamp.
+        day, month, year = dates[-1]
+        if 1 <= int(month) <= 12 and 1 <= int(day) <= 31:
+            return f"{int(year):04d}-{int(month):02d}"
+    return None
+
+
+def _mkk_is_portfolio_report(summary: dict, detail: dict) -> bool:
+    """Identify only explicit portfolio-distribution disclosures.
+
+    A FON disclosure includes issuance documents, material events and many
+    other report types.  Classification intentionally errs on the side of
+    leaving an item uncollected: a false positive can overwrite a fund's
+    monthly holdings snapshot.
+    """
+    text = " ".join([
+        str(summary.get("title") or ""),
+        mkk.subject_text(detail),
+        str(detail.get("disclosureReason") or ""),
+        " ".join(str(x) for x in summary.get("subReportIds") or []),
+    ])
+    folded = unicodedata.normalize("NFKD", text.casefold().replace("ı", "i"))
+    folded = "".join(ch for ch in folded if ch.isascii())
+    return any(token in folded for token in (
+        "portfoy dagilim raporu", "portfolio distribution report",
+        "portfolio distribution",
+    ))
+
+
+def sync_mkk_funds(conn: sqlite3.Connection, client: mkk.MKKClient | None = None) -> dict:
+    """Checkpoint the official MKK fund registry without changing TEFAS data."""
+    _ensure_schema(conn)
+    client = client or mkk.MKKClient()
+    now = datetime_now_iso()
+    rows = []
+    for fund in client.funds():
+        code = str(fund.get("fundCode") or "").upper().strip()
+        if not code:
+            continue
+        rows.append((
+            code, str(fund.get("fundId") or "") or None,
+            fund.get("fundName"), fund.get("fundType"), fund.get("fundClass"),
+            fund.get("fundState"), fund.get("kapUrl"), now,
+        ))
+    conn.executemany(
+        "INSERT INTO mkk_funds(code, fund_id, title, fund_type, fund_class, "
+        "fund_state, kap_url, fetched_at) VALUES (?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(code) DO UPDATE SET fund_id=excluded.fund_id, "
+        "title=excluded.title, fund_type=excluded.fund_type, "
+        "fund_class=excluded.fund_class, fund_state=excluded.fund_state, "
+        "kap_url=excluded.kap_url, fetched_at=excluded.fetched_at",
+        rows,
+    )
+    conn.commit()
+    return {"funds": len(rows)}
+
+
+def set_holdings_scope(conn: sqlite3.Connection, code: str, eligibility: str,
+                       reason: str, evidence_url: str | None = None) -> None:
+    """Record a reviewable eligibility exception for monthly coverage."""
+    _ensure_schema(conn)
+    eligibility = eligibility.lower()
+    if eligibility not in {"expected", "unknown", "exempt"}:
+        raise ValueError("eligibility must be expected, unknown, or exempt")
+    if not reason.strip():
+        raise ValueError("an eligibility reason is required")
+    if not conn.execute("SELECT 1 FROM funds WHERE code=?", (code.upper(),)).fetchone():
+        raise ValueError(f"unknown fund code: {code}")
+    conn.execute(
+        "INSERT INTO fund_holdings_scope(code, eligibility, reason, evidence_url, updated_at) "
+        "VALUES (?,?,?,?,?) ON CONFLICT(code) DO UPDATE SET "
+        "eligibility=excluded.eligibility, reason=excluded.reason, "
+        "evidence_url=excluded.evidence_url, updated_at=excluded.updated_at",
+        (code.upper(), eligibility, reason.strip(), evidence_url, datetime_now_iso()),
+    )
+    conn.commit()
+
+
+def _mkk_scan_cursor(conn: sqlite3.Connection, latest: int) -> int:
+    row = conn.execute("SELECT cursor FROM mkk_scan_state WHERE id=1").fetchone()
+    # Start at the first id of the live 50-item window. Subsequent runs pick
+    # up strictly new ids, avoiding both KAP's old brute-force scan and a
+    # repeat of the same MKK window.
+    return int(row[0]) if row else max(1, latest - MKK_BATCH_SIZE + 1)
+
+
+def _set_mkk_scan_cursor(conn: sqlite3.Connection, cursor: int, last_index: int) -> None:
+    conn.execute(
+        "INSERT INTO mkk_scan_state(id, cursor, last_index, updated_at) VALUES "
+        "(1,?,?,?) ON CONFLICT(id) DO UPDATE SET cursor=excluded.cursor, "
+        "last_index=excluded.last_index, updated_at=excluded.updated_at",
+        (cursor, last_index, datetime_now_iso()),
+    )
+    conn.commit()
+
+
+def discover_mkk_disclosures(conn: sqlite3.Connection, batches: int = 1,
+                             detail_limit: int = 4,
+                             client: mkk.MKKClient | None = None) -> dict:
+    """Collect MKK index metadata and inspect a bounded number of fund notices.
+
+    The service limit is six calls/minute. A run therefore makes one request
+    for the head index, up to ``batches`` list calls, then only a few detail
+    calls for fund notices. The checkpoint lets routine runs make steady
+    forward progress without ever bursting through the provider's quota.
+    """
+    _ensure_schema(conn)
+    if batches < 1 or detail_limit < 0:
+        raise ValueError("batches must be >= 1 and detail_limit must be >= 0")
+    client = client or mkk.MKKClient()
+    latest = client.last_disclosure_index()
+    cursor = _mkk_scan_cursor(conn, latest)
+    listed = 0
+    for _ in range(batches):
+        if cursor > latest:
+            break
+        batch = client.disclosures(cursor)
+        if not batch:
+            break
+        now = datetime_now_iso()
+        rows = []
+        for item in batch:
+            did = int(item["disclosureIndex"])
+            rows.append((
+                did, str(item.get("fundCode") or "").upper() or None,
+                str(item.get("fundId") or "") or None, item.get("title"),
+                json.dumps(item.get("subReportIds") or [], ensure_ascii=False),
+                json.dumps(item.get("acceptedDataFileTypes") or [], ensure_ascii=False),
+                now,
+            ))
+        conn.executemany(
+            "INSERT INTO mkk_disclosures(disclosure_index, fund_code, fund_id, title, "
+            "sub_report_ids, accepted_file_types, checked_at) VALUES (?,?,?,?,?,?,?) "
+            "ON CONFLICT(disclosure_index) DO UPDATE SET "
+            "fund_code=excluded.fund_code, fund_id=excluded.fund_id, title=excluded.title, "
+            "sub_report_ids=excluded.sub_report_ids, "
+            "accepted_file_types=excluded.accepted_file_types, checked_at=excluded.checked_at",
+            rows,
+        )
+        conn.commit()
+        listed += len(rows)
+        cursor = max(int(item["disclosureIndex"]) for item in batch) + 1
+        if len(batch) < MKK_BATCH_SIZE:
+            break
+    _set_mkk_scan_cursor(conn, cursor, latest)
+
+    # Detail requests are the authoritative report classifier. Limit them
+    # independently: list metadata does not reliably expose the Turkish
+    # subject, and non-report fund disclosures must never be parsed as books.
+    candidates = conn.execute(
+        "SELECT disclosure_index, fund_code, fund_id, title, sub_report_ids "
+        "FROM mkk_disclosures WHERE status='indexed' AND fund_code IS NOT NULL "
+        "ORDER BY disclosure_index DESC LIMIT ?", (detail_limit,)).fetchall()
+    inspected = found = ignored = errors = 0
+    for did, code, fund_id, title, sub_report_ids in candidates:
+        try:
+            detail = client.disclosure_detail(int(did))
+            attachment_urls = detail.get("attachmentUrls") or []
+            summary = {"title": title, "subReportIds": json.loads(sub_report_ids or "[]")}
+            is_report = _mkk_is_portfolio_report(summary, detail)
+            period = _mkk_period(detail.get("period"))
+            status = "found" if is_report else "ignored"
+            conn.execute(
+                "UPDATE mkk_disclosures SET subject=?, reporting_period=?, published_at=?, "
+                "attachment_urls=?, detail_json=?, status=?, checked_at=?, last_error=NULL "
+                "WHERE disclosure_index=?",
+                (mkk.subject_text(detail), period, detail.get("time"),
+                 json.dumps(attachment_urls, ensure_ascii=False),
+                 json.dumps(detail, ensure_ascii=False), status, datetime_now_iso(), did),
+            )
+            found += int(is_report)
+            ignored += int(not is_report)
+        except Exception as exc:
+            conn.execute(
+                "UPDATE mkk_disclosures SET status='error', last_error=?, checked_at=? "
+                "WHERE disclosure_index=?",
+                (str(exc)[:500], datetime_now_iso(), did),
+            )
+            errors += 1
+        conn.commit()
+        inspected += 1
+    return {"latest_index": latest, "cursor": cursor, "listed": listed,
+            "inspected": inspected, "portfolio_reports": found,
+            "ignored": ignored, "errors": errors}
+
+
+def _set_mkk_monthly_cursor(conn: sqlite3.Connection, period: str, cursor: int,
+                            head_index: int, live_cursor: int,
+                            exhausted: bool = False) -> None:
+    conn.execute(
+        "INSERT INTO mkk_monthly_scan_state(period, cursor, head_index, live_cursor, exhausted, updated_at) "
+        "VALUES (?,?,?,?,?,?) ON CONFLICT(period) DO UPDATE SET "
+        "cursor=excluded.cursor, head_index=excluded.head_index, "
+        "live_cursor=excluded.live_cursor, exhausted=excluded.exhausted, "
+        "updated_at=excluded.updated_at",
+        (period, cursor, head_index, live_cursor, int(exhausted), datetime_now_iso()),
+    )
+    conn.commit()
+
+
+def discover_mkk_monthly(conn: sqlite3.Connection, period: str, batches: int = 50,
+                         detail_limit: int = 180,
+                         client: mkk.MKKClient | None = None) -> dict:
+    """Walk backward through a portfolio month's actual filing window.
+
+    The live MKK endpoint returns 50 disclosures *from* an index. Starting at
+    the head and moving forward therefore only ever sees the newest page. This
+    collector persists an older-page cursor instead, so each run covers a
+    distinct contiguous slice of the month-end disclosure wave.
+    """
+    _ensure_schema(conn)
+    if batches < 1 or detail_limit < 0:
+        raise ValueError("batches must be >= 1 and detail_limit must be >= 0")
+    try:
+        year, month = (int(part) for part in period.split("-", 1))
+    except ValueError as err:
+        raise ValueError("period must be YYYY-MM") from err
+    if not 1 <= month <= 12:
+        raise ValueError("period must be YYYY-MM")
+    client = client or mkk.MKKClient()
+    state = conn.execute(
+        "SELECT cursor, head_index, live_cursor, exhausted "
+        "FROM mkk_monthly_scan_state WHERE period=?", (period,)).fetchone()
+    if state:
+        cursor, head_index, live_cursor, exhausted = (
+            int(state[0]), int(state[1]), int(state[2]), bool(state[3]))
+        latest = client.last_disclosure_index()
+        # Pre-migration rows have no live cursor. Their old head is still the
+        # correct first unseen id, so repair the state without replaying it.
+        live_cursor = live_cursor or head_index + 1
+    else:
+        latest = client.last_disclosure_index()
+        head_index = latest
+        cursor = max(1, latest - MKK_BATCH_SIZE + 1)
+        live_cursor = latest + 1
+        exhausted = False
+
+    listed = 0
+    pages_left = batches
+
+    def store_batch(batch: list[dict]) -> list[int]:
+        nonlocal listed
+        now = datetime_now_iso()
+        rows, ids = [], []
+        for item in batch:
+            did = int(item["disclosureIndex"])
+            ids.append(did)
+            rows.append((
+                did, str(item.get("fundCode") or "").upper() or None,
+                str(item.get("fundId") or "") or None, item.get("title"),
+                json.dumps(item.get("subReportIds") or [], ensure_ascii=False),
+                json.dumps(item.get("acceptedDataFileTypes") or [], ensure_ascii=False),
+                now,
+            ))
+        conn.executemany(
+            "INSERT INTO mkk_disclosures(disclosure_index, fund_code, fund_id, title, "
+            "sub_report_ids, accepted_file_types, checked_at) VALUES (?,?,?,?,?,?,?) "
+            "ON CONFLICT(disclosure_index) DO UPDATE SET "
+            "fund_code=excluded.fund_code, fund_id=excluded.fund_id, title=excluded.title, "
+            "sub_report_ids=excluded.sub_report_ids, "
+            "accepted_file_types=excluded.accepted_file_types, checked_at=excluded.checked_at",
+            rows,
+        )
+        conn.commit()
+        listed += len(ids)
+        return ids
+
+    # Collect notices published since the previous run first. Without this
+    # lane, a backward cursor would correctly recover the old filing wave but
+    # miss corrections/new reports that arrive later in days 1–15.
+    while pages_left and live_cursor <= latest:
+        batch = client.disclosures(live_cursor)
+        if not batch:
+            live_cursor = latest + 1
+            break
+        ids = store_batch(batch)
+        live_cursor = max(ids) + 1
+        pages_left -= 1
+        if len(ids) < MKK_BATCH_SIZE:
+            live_cursor = latest + 1
+            break
+
+    # Then use the remaining request budget to recover the still-unseen older
+    # part of the month-end wave in descending pages.
+    for _ in range(pages_left):
+        if exhausted or cursor < 1:
+            exhausted = True
+            break
+        batch = client.disclosures(cursor)
+        if not batch:
+            exhausted = True
+            break
+        ids = store_batch(batch)
+        cursor = min(ids) - MKK_BATCH_SIZE
+        if len(ids) < MKK_BATCH_SIZE:
+            exhausted = True
+            break
+    head_index = max(head_index, latest)
+    _set_mkk_monthly_cursor(conn, period, max(1, cursor), head_index,
+                            live_cursor, exhausted)
+
+    # Inspect only TEFAS funds, then retain reports from other months as
+    # deferred evidence rather than spending the current-month parser budget
+    # on them. The reporting period comes from the official detail response.
+    candidates = conn.execute(
+        "SELECT m.disclosure_index, m.fund_code, m.title, m.sub_report_ids "
+        "FROM mkk_disclosures m JOIN funds f ON f.code=m.fund_code "
+        "WHERE m.status='indexed' AND m.disclosure_index <= ? "
+        "ORDER BY m.disclosure_index DESC LIMIT ?", (head_index, detail_limit),
+    ).fetchall()
+    inspected = found = deferred = ignored = errors = 0
+    for did, code, title, sub_report_ids in candidates:
+        try:
+            detail = client.disclosure_detail(int(did))
+            attachment_urls = detail.get("attachmentUrls") or []
+            summary = {"title": title, "subReportIds": json.loads(sub_report_ids or "[]")}
+            is_report = _mkk_is_portfolio_report(summary, detail)
+            report_period = _mkk_period(detail.get("period"))
+            if is_report and report_period == period:
+                status = "found"
+                found += 1
+            elif is_report:
+                status = "deferred"
+                deferred += 1
+            else:
+                status = "ignored"
+                ignored += 1
+            conn.execute(
+                "UPDATE mkk_disclosures SET subject=?, reporting_period=?, published_at=?, "
+                "attachment_urls=?, detail_json=?, status=?, checked_at=?, last_error=NULL "
+                "WHERE disclosure_index=?",
+                (mkk.subject_text(detail), report_period, detail.get("time"),
+                 json.dumps(attachment_urls, ensure_ascii=False),
+                 json.dumps(detail, ensure_ascii=False), status, datetime_now_iso(), did),
+            )
+        except Exception as exc:
+            conn.execute(
+                "UPDATE mkk_disclosures SET status='error', last_error=?, checked_at=? "
+                "WHERE disclosure_index=?",
+                (str(exc)[:500], datetime_now_iso(), did),
+            )
+            errors += 1
+        conn.commit()
+        inspected += 1
+    return {"period": period, "head_index": head_index, "latest_index": latest,
+            "cursor": max(1, cursor), "live_cursor": live_cursor,
+            "exhausted": exhausted, "listed": listed,
+            "inspected": inspected, "portfolio_reports": found,
+            "deferred": deferred, "ignored": ignored, "errors": errors}
+
+
+# ------------------------------------------------------ monthly coverage
+
+# KAP fund profiles currently list the next monthly notification in the
+# first 1–10 calendar days after month end. Day 15 leaves room for weekends,
+# corrections and a normal operations delay without concealing a missed run
+# for another month.
+MONTHLY_PUBLICATION_GRACE_DAYS = 15
+
+
+def latest_due_period(as_of: date | None = None,
+                      grace_days: int = MONTHLY_PUBLICATION_GRACE_DAYS) -> str:
+    """Return the newest portfolio month whose publication window has closed.
+
+    A portfolio for month M is only considered due after the end of M plus a
+    generous grace period.  This prevents the UI and monitors from calling a
+    current-month report "missing" before managers have a reasonable chance
+    to publish it.
+    """
+    as_of = as_of or date.today()
+    first = as_of.replace(day=1)
+    # Walk backwards from the prior month. The loop is intentionally tiny but
+    # makes the month-end calculation correct across leap years and January.
+    for _ in range(24):
+        month_end = first - timedelta(days=1)
+        if as_of >= month_end + timedelta(days=grace_days):
+            return f"{month_end:%Y-%m}"
+        first = month_end.replace(day=1)
+    raise RuntimeError("could not determine a due holdings period")
+
+
+def latest_collection_period(as_of: date | None = None) -> str:
+    """Return the just-closed portfolio month being collected this month."""
+    as_of = as_of or date.today()
+    previous_month_end = as_of.replace(day=1) - timedelta(days=1)
+    return f"{previous_month_end:%Y-%m}"
+
+
+def refresh_monthly_status(conn: sqlite3.Connection, period: str | None = None,
+                           as_of: date | None = None) -> dict:
+    """Materialise per-fund monthly disclosure states for the public product.
+
+    The default candidate universe is active TEFAS mutual funds (YAT). An
+    operator may mark a fund ``unknown`` or ``exempt`` only with a retained
+    reason/evidence; neither absence of a report nor a fund category is proof
+    of exemption. `unseen` remains an observability state, never a zero or a
+    non-filing allegation.
+    """
+    _ensure_schema(conn)
+    period = period or latest_due_period(as_of)
+    try:
+        year, month = (int(part) for part in period.split("-", 1))
+    except ValueError as err:
+        raise ValueError("period must be YYYY-MM") from err
+    if not 1 <= month <= 12:
+        raise ValueError("period must be YYYY-MM")
+
+    roster = conn.execute(
+        "SELECT f.code, COALESCE(s.eligibility, 'expected'), s.reason "
+        "FROM funds f LEFT JOIN fund_holdings_scope s ON s.code=f.code "
+        "WHERE f.fund_type='YAT' ORDER BY f.code"
+    ).fetchall()
+    parsed = {row[0] for row in conn.execute(
+        "SELECT DISTINCT code FROM fund_holdings WHERE period=?", (period,))}
+    reports: dict[str, tuple[int, str]] = {}
+    for code, did, status in conn.execute(
+        """
+        SELECT COALESCE(k.code, f.code) AS code, k.id, k.status
+        FROM kap_disclosures k
+        LEFT JOIN funds f ON f.title = k.fund_title
+        WHERE k.year=? AND k.period=?
+          AND COALESCE(k.code, f.code) IS NOT NULL
+        ORDER BY k.id DESC
+        """, (year, month)):
+        # Keep the newest deterministic report; a parsed book is resolved
+        # from fund_holdings above, while pending beats a terminal error so a
+        # later retry is never hidden behind an earlier parser failure.
+        if code not in reports or status in ("found", "retry"):
+            reports[code] = (int(did), str(status))
+
+    # The official MKK route uses a different disclosure-index namespace from
+    # KAP's public notification pages, but it represents the same coverage
+    # state. Include discovered MKK reports here so a verified report waiting
+    # for its attachment parser is honestly shown as `pending`, never
+    # `unseen`. The current UI does not construct a link from disclosure_id.
+    for code, did, status in conn.execute(
+        "SELECT fund_code, disclosure_index, status FROM mkk_disclosures "
+        "WHERE reporting_period=? AND status IN ('found', 'parsed', 'error') "
+        "ORDER BY disclosure_index DESC", (period,)):
+        mapped = "found" if status == "found" else str(status)
+        if code not in reports or mapped == "found":
+            reports[str(code)] = (int(did), mapped)
+
+    now = datetime_now_iso()
+    rows = []
+    for code, eligibility, reason in roster:
+        did, status = reports.get(code, (None, "unseen"))
+        state = ("exempt" if eligibility == "exempt" else
+                 "parsed" if code in parsed else
+                 "pending" if status in ("found", "retry") else
+                 "error" if status == "error" else "unseen")
+        rows.append((period, code, state, eligibility, reason, did, now))
+    conn.execute("DELETE FROM kap_monthly_status WHERE period=?", (period,))
+    conn.executemany(
+        "INSERT INTO kap_monthly_status(period, code, state, eligibility, "
+        "eligibility_reason, disclosure_id, updated_at) VALUES (?,?,?,?,?,?,?)", rows)
+    conn.commit()
+    return monthly_status_summary(conn, period)
+
+
+def datetime_now_iso() -> str:
+    """One local helper keeps the SQLite coverage snapshot timestamp uniform."""
+    from datetime import datetime
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def monthly_status_summary(conn: sqlite3.Connection,
+                           period: str | None = None) -> dict:
+    """Return a compact monthly holdings SLA/coverage summary."""
+    _ensure_schema(conn)
+    period = period or latest_due_period()
+    rows = conn.execute(
+        "SELECT eligibility, state, COUNT(*) FROM kap_monthly_status "
+        "WHERE period=? GROUP BY eligibility, state", (period,)).fetchall()
+    counts = {(eligibility, state): int(n) for eligibility, state, n in rows}
+    eligible = sum(n for (eligibility, _), n in counts.items()
+                   if eligibility == "expected")
+
+    def expected(state: str) -> int:
+        return counts.get(("expected", state), 0)
+
+    latest = conn.execute("SELECT MAX(period) FROM fund_holdings").fetchone()[0]
+    return {
+        "period": period,
+        "eligible_funds": eligible,
+        "parsed_funds": expected("parsed"),
+        "pending_funds": expected("pending"),
+        "error_funds": expected("error"),
+        "unseen_funds": expected("unseen"),
+        "unknown_funds": sum(n for (eligibility, _), n in counts.items()
+                             if eligibility == "unknown"),
+        "exempt_funds": sum(n for (eligibility, _), n in counts.items()
+                            if eligibility == "exempt"),
+        "latest_parsed_period": latest,
+        "capture_rate": round(100 * expected("parsed") / eligible, 1)
+        if eligible else None,
+    }
+
+
 # --------------------------------------------------------------- parse
 
 def _resolve_fund_code(
@@ -645,6 +1274,49 @@ def daily_update(conn: sqlite3.Connection, max_ids: int = 5000) -> dict:
     # reason and are retried automatically only when the download was transient.
     out["legacy_errors"] = requeue_legacy_errors(conn, limit=50)
     out.update(parse_pending(conn, limit=300))
+    out["monthly_coverage"] = refresh_monthly_status(conn)
+    return out
+
+
+def collect_monthly(conn: sqlite3.Connection, period: str | None = None,
+                    max_ids: int = 5000, mkk_batches: int = 50,
+                    mkk_detail_limit: int = 180,
+                    mkk_parse_limit: int = 120) -> dict:
+    """Collect the latest monthly books through the official MKK index.
+
+    The client spaces calls 10.5 seconds apart, respecting the product quota.
+    The older KAP-ID scan is a recovery fallback only when credentials have
+    not been installed yet.
+    """
+    _ensure_schema(conn)
+    # Collection starts as soon as a month closes; public SLA assessment waits
+    # until the separate 15-day grace closes.
+    period = period or latest_collection_period()
+    try:
+        client = mkk.MKKClient()
+        out: dict = {}
+        out["mkk_funds"] = sync_mkk_funds(conn, client=client)
+        out["mkk"] = discover_mkk_monthly(
+            conn, period=period, batches=mkk_batches,
+            detail_limit=mkk_detail_limit, client=client)
+        out["mkk_parse"] = parse_mkk_pending(
+            conn, limit=mkk_parse_limit, period=period, client=client)
+        # Recover a modest number of reports found before the MKK migration,
+        # but do not run a second discovery crawl in the normal path.
+        out["legacy_parse"] = parse_pending(conn, limit=50, period=period)
+        out["monthly_coverage"] = refresh_monthly_status(conn)
+        print("  monthly holdings coverage:", out["monthly_coverage"])
+        return out
+    except mkk.MKKConfigurationError:
+        # The public scanner keeps old installations working until the MKK
+        # secrets are installed. It is deliberately not the normal path.
+        pass
+    if _get_cursor(conn) <= 0:
+        raise RuntimeError("no KAP frontier yet — seed the scanner before monthly collection")
+    out = scan_forward(conn, budget=max_ids)
+    out.update(parse_pending(conn, limit=250, period=period))
+    out["monthly_coverage"] = refresh_monthly_status(conn, period)
+    print("  monthly holdings coverage:", out["monthly_coverage"])
     return out
 
 
@@ -690,8 +1362,9 @@ def _fetch_disclosure(s: requests.Session, did: int,
 
 
 def parse_pending(conn: sqlite3.Connection, limit: int = 50,
-                  session: requests.Session | None = None) -> dict:
-    """Resolve + parse newly found and transient-retry disclosures."""
+                  session: requests.Session | None = None,
+                  period: str | None = None) -> dict:
+    """Resolve + parse newly found/retry disclosures, optionally for a month."""
     _ensure_schema(conn)
     s = session or requests.Session()
     known_codes = {c for (c,) in conn.execute("SELECT code FROM funds")}
@@ -702,11 +1375,21 @@ def parse_pending(conn: sqlite3.Connection, limit: int = 50,
         normalised_titles[_normalise_title(title)].add(code)
     aliases = {title: code for title, code in conn.execute(
         "SELECT kap_title, code FROM kap_fund_aliases")}
+    where = "WHERE status IN ('found', 'retry')"
+    params: list[object] = []
+    if period:
+        try:
+            year, month = (int(part) for part in period.split("-", 1))
+        except ValueError as err:
+            raise ValueError("period must be YYYY-MM") from err
+        where += " AND year=? AND period=?"
+        params.extend((year, month))
+    params.append(limit)
     rows = conn.execute(
         "SELECT id, fund_title, year, period, attempts FROM kap_disclosures "
-        "WHERE status IN ('found', 'retry') "
+        f"{where} "
         "ORDER BY CASE status WHEN 'found' THEN 0 ELSE 1 END, id DESC LIMIT ?",
-        (limit,)).fetchall()
+        params).fetchall()
     ok = retry = err = 0
     for did, fund_title, year, per, attempts in rows:
         attempts = int(attempts or 0) + 1
@@ -757,6 +1440,115 @@ def parse_pending(conn: sqlite3.Connection, limit: int = 50,
         conn.commit()
         time.sleep(PAUSE)
     return {"parsed": ok, "retries": retry, "errors": err}
+
+
+def parse_mkk_pending(conn: sqlite3.Connection, limit: int = 2,
+                      period: str | None = None,
+                      client: mkk.MKKClient | None = None) -> dict:
+    """Parse official-MKK-discovered portfolio report attachments.
+
+    The MKK index gives the authoritative fund code and notice metadata; the
+    attachment remains the source document. A successful newer report replaces
+    the fund's complete snapshot for that reporting month, which also makes a
+    corrected/re-uploaded disclosure safe: removed positions cannot linger.
+    """
+    _ensure_schema(conn)
+    if limit < 0:
+        raise ValueError("limit must be >= 0")
+    client = client or mkk.MKKClient()
+    known_codes = {c for (c,) in conn.execute("SELECT code FROM funds")}
+    where = "WHERE status='found'"
+    params: list[object] = []
+    if period:
+        where += " AND reporting_period=?"
+        params.append(period)
+    params.append(limit)
+    rows = conn.execute(
+        "SELECT disclosure_index, fund_code, reporting_period, published_at, "
+        "attachment_urls, attempts FROM mkk_disclosures " + where +
+        " ORDER BY disclosure_index DESC LIMIT ?", params).fetchall()
+    parsed = errors = 0
+    for did, fund_code, period, published_at, attachment_urls, attempts in rows:
+        attempts = int(attempts or 0) + 1
+        conn.execute("UPDATE mkk_disclosures SET attempts=?, checked_at=? "
+                     "WHERE disclosure_index=?", (attempts, datetime_now_iso(), did))
+        conn.commit()
+        try:
+            if not fund_code or fund_code not in known_codes:
+                raise ValueError(f"MKK fund code is not in the TEFAS universe ({fund_code!r})")
+            if not period:
+                raise ValueError("MKK disclosure has no unambiguous reporting period")
+            attachments = json.loads(attachment_urls or "[]")
+            if not isinstance(attachments, list) or not attachments:
+                raise ValueError("MKK disclosure has no attachments")
+            # A correction can carry multiple files. Prefer a PDF attachment,
+            # but try every advertised attachment before declaring failure.
+            last_error: Exception | None = None
+            selected_id = digest = None
+            holdings: list[dict] | None = None
+            for attachment in attachments:
+                url = str(attachment.get("url") or "")
+                if not url:
+                    continue
+                try:
+                    raw = client.download_attachment(url)
+                    pdf = _extract_pdf(raw)
+                    pdf_code, candidate = parse_pdf_holdings(pdf)
+                    if pdf_code and pdf_code.upper() != fund_code.upper():
+                        raise ValueError(f"PDF code {pdf_code} differs from MKK {fund_code}")
+                    if not candidate:
+                        raise ValueError("no ISIN rows parsed")
+                    if len(candidate) > 600:
+                        raise ValueError(f"implausible holding count {len(candidate)}")
+                    selected_id = url.rstrip("/").rsplit("/", 1)[-1]
+                    digest = hashlib.sha256(raw).hexdigest()
+                    holdings = candidate
+                    break
+                except Exception as exc:  # retain final attachment diagnosis
+                    last_error = exc
+            if holdings is None or selected_id is None or digest is None:
+                raise last_error or ValueError("no usable MKK attachment")
+            # The canonical index is chronological. If the same fund/month has
+            # a later parsed report, do not let an older pending copy overwrite
+            # it on a later retry.
+            newer = conn.execute(
+                "SELECT 1 FROM mkk_disclosures WHERE fund_code=? "
+                "AND reporting_period=? AND status='parsed' "
+                "AND disclosure_index > ?", (fund_code, period, did)).fetchone()
+            if newer:
+                conn.execute("UPDATE mkk_disclosures SET status='ignored', last_error=?, "
+                             "checked_at=? WHERE disclosure_index=?",
+                             ("superseded by later MKK disclosure", datetime_now_iso(), did))
+                conn.commit()
+                continue
+            # A monthly report is a complete snapshot, not a delta. Delete old
+            # positions first so a correction that removes an ISIN is visible.
+            conn.execute("DELETE FROM fund_holdings WHERE code=? AND period=?",
+                         (fund_code, period))
+            conn.executemany(
+                "INSERT INTO fund_holdings(code, period, isin, ticker, name, quantity, "
+                "value, weight_pct, disclosure_id, source, attachment_id, "
+                "attachment_sha256, parser_version, published_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                [(fund_code, period, h["isin"], h["ticker"], h["name"],
+                  h["quantity"], h["value"], h["weight_pct"], did, "mkk-api",
+                  selected_id, digest, MKK_PARSER_VERSION, published_at)
+                 for h in holdings],
+            )
+            conn.execute("UPDATE mkk_disclosures SET status='parsed', last_error=NULL, "
+                         "checked_at=? WHERE disclosure_index=?",
+                         (datetime_now_iso(), did))
+            conn.commit()
+            parsed += 1
+            print(f"  MKK {did} {fund_code}: {len(holdings)} holdings ({period})")
+        except Exception as exc:
+            conn.execute("UPDATE mkk_disclosures SET status='error', last_error=?, "
+                         "checked_at=? WHERE disclosure_index=?",
+                         (str(exc)[:500], datetime_now_iso(), did))
+            conn.commit()
+            errors += 1
+            print(f"  MKK {did} ERROR: {exc}")
+    return {"parsed": parsed, "errors": errors}
 
 
 def requeue_legacy_errors(conn: sqlite3.Connection, limit: int = 50) -> dict:

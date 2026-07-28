@@ -35,7 +35,7 @@ from . import db
 # system_status is NOT here — it gets a key-level upsert (see
 # _publish_status) so cloud-only rows survive a full-table replace.
 FULL_TABLES = ["funds", "stocks", "benchmarks", "fund_holdings",
-               "kap_disclosures"]
+               "kap_disclosures", "kap_monthly_status"]
 INCREMENTAL = {"prices": "date", "stock_prices": "date"}
 SKIP = {"allocations", "live_quotes"}
 

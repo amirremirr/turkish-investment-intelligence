@@ -4,6 +4,7 @@ import {
   getFund,
   getFundNav,
   getFundHoldings,
+  getFundPortfolioStatus,
   getSimilarFunds,
   getFundAttribution,
 } from "@/lib/queries";
@@ -57,11 +58,12 @@ export default async function FundPage({
   // Every secondary query degrades rather than 500s the page: the core
   // metrics above come from getFund, and a slow/failed holdings or NAV
   // query should cost a card, not the whole render.
-  const [nav, holdings, similar, attrib] = await Promise.all([
+  const [nav, holdings, similar, attrib, portfolioStatus] = await Promise.all([
     getFundNav(code).catch(() => []),
     getFundHoldings(code).catch(() => []),
     getSimilarFunds(code).catch(() => []),
     getFundAttribution(code).catch(() => []),
+    getFundPortfolioStatus(code).catch(() => null),
   ]);
 
   // downsample NAV to ~200 points for a compact SVG
@@ -99,6 +101,22 @@ export default async function FundPage({
   // must NOT go through pctPoints() (which scales a fraction by 100)
   const pp = (x: number | null | undefined, d = 2) =>
     x == null ? "—" : `${x >= 0 ? "+" : ""}${num(x, d)}pp`;
+
+  const portfolioPeriod = holdings[0]?.period ?? portfolioStatus?.latestPeriod;
+  const portfolioHint = holdings.length
+    ? `${holdings.length} positions${portfolioPeriod ? ` · report ${portfolioPeriod}` : ""}`
+    : portfolioStatus ? `due month ${portfolioStatus.duePeriod}` : undefined;
+  const portfolioStatusCopy = portfolioStatus?.state === "pending"
+    ? `A KAP portfolio disclosure for ${portfolioStatus.duePeriod} was found and is waiting to be parsed. This is not a zero-holdings result.`
+    : portfolioStatus?.state === "error"
+      ? `A KAP portfolio disclosure for ${portfolioStatus.duePeriod} was found but its template could not be parsed yet. This is not a zero-holdings result.`
+      : portfolioStatus?.state === "unseen"
+        ? portfolioStatus.eligibility === "unknown"
+          ? `Monthly reporting eligibility has not been confirmed for this fund${portfolioStatus.eligibilityReason ? `: ${portfolioStatus.eligibilityReason}` : ""}. This is not evidence of zero holdings or non-filing.`
+          : `No KAP portfolio disclosure has been deterministically linked for the due month ${portfolioStatus.duePeriod}. This is unknown coverage, not evidence of zero holdings or non-filing.`
+        : portfolioStatus?.state === "exempt"
+          ? `This fund is excluded from the monthly-holdings denominator${portfolioStatus.eligibilityReason ? `: ${portfolioStatus.eligibilityReason}` : ""}.`
+        : null;
 
   return (
     <div className="space-y-8">
@@ -236,7 +254,7 @@ export default async function FundPage({
 
         <Card>
           <SectionTitle
-            hint={holdings.length ? `${holdings.length} positions` : undefined}
+            hint={portfolioHint}
           >
             Portfolio
           </SectionTitle>
@@ -251,6 +269,11 @@ export default async function FundPage({
             </p>
           ) : (
             <>
+              {portfolioStatus && portfolioStatus.state !== "parsed" && (
+                <p className="mb-3 rounded-md border border-neg/40 bg-neg/5 px-3 py-2 text-xs text-fg">
+                  Latest captured portfolio is {portfolioPeriod ?? "unknown"}. {portfolioStatusCopy}
+                </p>
+              )}
               {hasWeights && (
                 <div className="mb-3 flex flex-wrap gap-x-6 gap-y-1 text-sm">
                   <span className="text-muted">
