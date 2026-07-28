@@ -129,9 +129,9 @@ def check_yahoo() -> tuple[str, str]:
             return CHANGED, "Yahoo chart response no longer has the expected close path"
         if not closes or not any(value is not None for value in closes):
             return DOWN, "XU100.IS returned no closes from Yahoo chart endpoint"
-        return CHANGED, (
-            "Yahoo chart endpoint has closes but the pipeline client returned none; "
-            "review yfinance compatibility"
+        return WARN, (
+            "Yahoo chart endpoint returned closes but yfinance returned none; "
+            "likely runner/client rate limiting rather than a source-contract change"
         )
     last = float(s.iloc[-1])
     if not last > 0:

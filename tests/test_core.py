@@ -532,6 +532,29 @@ def test_source_check_yahoo_rate_limit_is_a_warning(monkeypatch):
     assert "rate-limited" in detail
 
 
+def test_source_check_yahoo_client_empty_with_valid_chart_is_a_warning(monkeypatch):
+    from tefaslab import benchmarks
+
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {
+                "chart": {
+                    "result": [
+                        {"indicators": {"quote": [{"close": [1.0, 2.0]}]}}
+                    ]
+                }
+            }
+
+    monkeypatch.setattr(benchmarks, "_closes", lambda *_: [])
+    monkeypatch.setattr(sc.requests, "get", lambda *_, **__: Response())
+    status, detail = sc.check_yahoo()
+    assert status == sc.WARN
+    assert "yfinance" in detail
+
+
 def test_source_check_warn_does_not_page(monkeypatch):
     monkeypatch.setattr(sc.time, "sleep", lambda *_: None)
     monkeypatch.setattr(sc, "CHECKS", [("Yahoo", lambda: (sc.WARN, "429"))])
