@@ -1,0 +1,105 @@
+name: Monthly holdings recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      cycles_per_pass:
+        description: "Bounded MKK collection cycles per recovery pass (1-4)"
+        type: choice
+        options: ["4", "3", "2", "1"]
+        default: "4"
+
+# Share the stateful SQLite cache with the normal pipeline. A workflow-level
+# group makes the recovery wait for any daily run, then lets its two jobs run
+# sequentially without racing or overwriting a newer database.
+concurrency:
+  group: daily-pipeline
+  cancel-in-progress: false
+
+env:
+  EVDS_API_KEY: ${{ secrets.EVDS_API_KEY }}
+  MKK_USERNAME: ${{ secrets.MKK_USERNAME }}
+  MKK_PASSWORD: ${{ secrets.MKK_PASSWORD }}
+  SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+  REQUIRE_SUPABASE_PUBLISH: "true"
+  PYTHONIOENCODING: utf-8
+
+jobs:
+  first-pass:
+    name: Recovery pass 1 of 2
+    runs-on: ubuntu-latest
+    # GitHub-hosted jobs cap at 360 minutes. Four ~75-minute MKK cycles plus
+    # setup/publish stay inside that cap while leaving an operational buffer.
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Restore database
+        uses: actions/cache/restore@v4
+        with:
+          path: data/funds.db
+          key: funds-db-${{ github.run_id }}-pass-1
+          restore-keys: funds-db-
+      - name: Require serving and MKK credentials
+        run: |
+          test -n "$SUPABASE_DB_URL" || { echo "::error::SUPABASE_DB_URL is required"; exit 1; }
+          test -n "$MKK_USERNAME" && test -n "$MKK_PASSWORD" || {
+            echo "::error::MKK_USERNAME and MKK_PASSWORD are required"; exit 1; }
+      - name: Collect four bounded monthly windows
+        run: |
+          for i in $(seq 1 ${{ inputs.cycles_per_pass }}); do
+            echo "::group::MKK monthly recovery cycle $i / ${{ inputs.cycles_per_pass }}"
+            python -m tefaslab holdings monthly --count 5000
+            echo "::endgroup::"
+          done
+          python -m tefaslab holdings stats
+          python -m tefaslab daily --skip-raw
+      - name: Save database for pass 2
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/funds.db
+          key: funds-db-${{ github.run_id }}-pass-1
+
+  second-pass:
+    name: Recovery pass 2 of 2
+    needs: first-pass
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Restore database from pass 1
+        uses: actions/cache/restore@v4
+        with:
+          path: data/funds.db
+          key: funds-db-${{ github.run_id }}-pass-1
+          restore-keys: funds-db-
+      - name: Require serving and MKK credentials
+        run: |
+          test -n "$SUPABASE_DB_URL" || { echo "::error::SUPABASE_DB_URL is required"; exit 1; }
+          test -n "$MKK_USERNAME" && test -n "$MKK_PASSWORD" || {
+            echo "::error::MKK_USERNAME and MKK_PASSWORD are required"; exit 1; }
+      - name: Continue four bounded monthly windows
+        run: |
+          for i in $(seq 1 ${{ inputs.cycles_per_pass }}); do
+            echo "::group::MKK monthly recovery cycle $i / ${{ inputs.cycles_per_pass }}"
+            python -m tefaslab holdings monthly --count 5000
+            echo "::endgroup::"
+          done
+          python -m tefaslab holdings stats
+          python -m tefaslab daily --skip-raw
+      - name: Save final database
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/funds.db
+          key: funds-db-${{ github.run_id }}-pass-2
