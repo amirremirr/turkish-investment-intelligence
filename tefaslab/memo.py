@@ -11,7 +11,7 @@ from datetime import date
 
 import pandas as pd
 
-from . import factors, flows, metrics
+from . import factors, flows, metrics, rigor
 
 FACTOR_LABELS = {
     "bist100": "Turkish equity (BIST100)",
@@ -34,7 +34,9 @@ def generate_memo(conn: sqlite3.Connection, code: str, rf: float = 0.0,
     peers = table[table["category"] == m["category"]]
 
     try:
-        f = factors.fund_factor_model(conn, code)
+        f = factors.fund_factor_model(
+            conn, code, rf_daily=rigor._cash_daily(conn),
+            clip_returns=rigor.MAX_DAILY_MOVE)
     except (KeyError, ValueError):
         f = None
 
@@ -43,11 +45,16 @@ def generate_memo(conn: sqlite3.Connection, code: str, rf: float = 0.0,
     flow90 = flow[(flow["date"] > cutoff) & (flow["code"] == code)]["flow"].sum()
 
     strengths, risks = [], []
+    # The current rigor gate has no FDR survivors. Keep this explicit rather
+    # than letting an individual t-stat turn into a manager-skill claim.
+    citable_alpha = False
 
-    if pd.notna(m["excess_1y"]) and m["excess_1y"] > 0.05:
+    if (m["category"] == "Equity Turkey" and pd.notna(m["excess_1y"])
+            and m["excess_1y"] > 0.05):
         strengths.append(f"Beat BIST100 by {m['excess_1y'] * 100:+.1f}pp "
                          "over the last year")
-    elif pd.notna(m["excess_1y"]) and m["excess_1y"] < -0.05:
+    elif (m["category"] == "Equity Turkey" and pd.notna(m["excess_1y"])
+          and m["excess_1y"] < -0.05):
         risks.append(f"Underperformed BIST100 by "
                      f"{abs(m['excess_1y']) * 100:.1f}pp over the last year")
 
@@ -58,7 +65,7 @@ def generate_memo(conn: sqlite3.Connection, code: str, rf: float = 0.0,
     # Same philosophy as the skill score: a noisy alpha on a short
     # sample is not a strength — require statistical significance
     # (|t| > 2), not just a big point estimate.
-    if (f and f["alpha_annual"] > 0.10 and f["r_squared"] > 0.3
+    if (citable_alpha and f and f["alpha_annual"] > 0.10 and f["r_squared"] > 0.3
             and (f.get("alpha_t") or 0) > 2):
         strengths.append(f"Positive factor-adjusted performance "
                          f"(alpha ≈ {f['alpha_annual'] * 100:.0f}%/yr, "
@@ -71,7 +78,7 @@ def generate_memo(conn: sqlite3.Connection, code: str, rf: float = 0.0,
                      "could be noise on a short sample")
     # symmetric: a significantly NEGATIVE alpha is a risk in its own
     # right (persistent value destruction after factor exposure)
-    if (f and f["alpha_annual"] < -0.10 and f["r_squared"] > 0.3
+    if (citable_alpha and f and f["alpha_annual"] < -0.10 and f["r_squared"] > 0.3
             and (f.get("alpha_t") or 0) < -2):
         risks.append(f"Significantly negative factor-adjusted "
                      f"performance (alpha ≈ "
@@ -79,6 +86,10 @@ def generate_memo(conn: sqlite3.Connection, code: str, rf: float = 0.0,
                      f"t = {f['alpha_t']:.1f})")
 
     if f:
+        risks.append(
+            "No individual factor-model alpha is citable as manager skill on "
+            "the current sample after multiple-testing control."
+        )
         drivers = {k: v["beta"] for k, v in f["factors"].items()}
         main = max(drivers, key=lambda k: abs(drivers[k]))
         if abs(drivers[main]) > 0.5:
@@ -110,7 +121,7 @@ def generate_memo(conn: sqlite3.Connection, code: str, rf: float = 0.0,
                      "outflow in 90 days")
     elif flow90 > 0.05 * m["aum"]:
         strengths.append(f"Attracting capital: ₺{flow90 / 1e6:,.0f}mn net "
-                         "inflow in 90 days")
+                         "inflow in 90 days; not evidence of investor conviction")
 
     vol = m["ann_vol"] if pd.notna(m["ann_vol"]) else 0
     if vol < 0.10:
@@ -125,7 +136,7 @@ def generate_memo(conn: sqlite3.Connection, code: str, rf: float = 0.0,
                    "low-volatility or short-horizon investors")
 
     lines = [
-        f"# Investment memo: {code}",
+        f"# Research memo: {code}",
         f"*{m['title']}*",
         "",
         f"**Category:** {m['category']} · **AUM:** ₺{m['aum'] / 1e9:.2f}B · "
@@ -148,9 +159,9 @@ def generate_memo(conn: sqlite3.Connection, code: str, rf: float = 0.0,
         "## Risks",
         *(f"- {r}" for r in (risks or ["None identified by rules"])),
         "",
-        "## Investor profile",
-        f"- **Suitable for:** {profile[0]}",
-        f"- **Not suitable for:** {profile[1]}",
+        "## Generic risk-profile context",
+        f"- May align with: {profile[0]}",
+        f"- May not align with: {profile[1]}",
         "",
         "---",
         "*Rule-based memo generated from TEFAS data; every statement "

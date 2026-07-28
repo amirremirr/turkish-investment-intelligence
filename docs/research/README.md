@@ -1,14 +1,18 @@
 # Research Notes
 
-Reproducible studies on the Turkish fund market, built on the
-platform's database. Methodology, standard errors, and limitations in
-[METHODOLOGY.md](../METHODOLOGY.md); every note ends with the command
-that reproduces it.
+These notes are reproducible investigations, not a catalogue of trading
+signals. Each note links to its method, data scope and current claim status in
+[METHODOLOGY.md](../METHODOLOGY.md).
 
-| # | Note | One-line finding |
-|---|---|---|
-| 1 | [Retail fund flows are mildly contrarian](01-contrarian-flows.md) | Equity-fund inflows predict *lower* BIST returns (NW t=−2.5) — only in calm markets, only domestic equity |
-| 2 | [Investors chase quarterly winners](02-performance-chasing.md) | Flows respond to trailing 63-day returns (NW t=4.3), not weekly moves |
-| 3 | [~1 in 5 "active" equity funds is a closet indexer](03-closet-indexing.md) | Of 236 large "active" equity funds, 52 run R²≥0.85 at β≈1 with no positive alpha (excess-of-cash) |
-| 4 | [The TEFAS NAV timing lag](04-nav-timing-lag.md) | NAVs lag the market (+1d domestic, +2d global); same-day analysis is structurally wrong |
-| 5 | [The defensive Turkish investor](05-defensive-investor.md) | Synthesis: +9pp real rates → rational cash parking; equity's AUM gain is price effect, not conviction |
+| # | Note | Status | Permitted reading |
+|---|---|---|---|
+| 1 | [Retail fund flows are mildly contrarian](01-contrarian-flows.md) | Exploratory | Small historical association in one regime; not tradeable or causal. |
+| 2 | [Aggregate performance chasing did not survive a fund-level test](02-performance-chasing.md) | Retired | Do not cite as evidence that investors chase winners. |
+| 3 | [Closet-index classification](03-closet-indexing.md) | Descriptive | Index-like exposure classification, not a net-of-fee value claim. |
+| 4 | [The TEFAS NAV timing lag](04-nav-timing-lag.md) | Measured | Alignment correction for the documented liquid-fund tests. |
+| 5 | [The defensive Turkish investor](05-defensive-investor.md) | Exploratory | Historical synthesis, not a behavioural or allocation conclusion. |
+
+A future `validated` note must publish its pre-specified question, hypothesis
+family, frozen train/holdout split, effect-size threshold, snapshot hash and
+code revision. A result that fails a stronger test is retained as `retired`,
+not silently removed.

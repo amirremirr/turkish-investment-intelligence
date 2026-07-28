@@ -13,12 +13,28 @@ type SortKey =
   | "max_dd"
   | "aum";
 
-const COLS: { key: SortKey; label: string; fmt: (r: FundRow) => string; sign?: boolean }[] = [
+const COLS: {
+  key: SortKey;
+  label: string;
+  title?: string;
+  fmt: (r: FundRow) => string;
+  sign?: boolean;
+}[] = [
   { key: "ret_1y", label: "1Y return", fmt: (r) => pct(r.ret_1y), sign: true },
   { key: "sharpe", label: "Sharpe", fmt: (r) => num(r.sharpe, 2), sign: true },
   { key: "max_dd", label: "Max DD", fmt: (r) => pct(r.max_dd), sign: true },
-  { key: "skill_score", label: "Skill", fmt: (r) => num(r.skill_score, 0) },
-  { key: "suitability_score", label: "Suitability", fmt: (r) => num(r.suitability_score, 0) },
+  {
+    key: "skill_score",
+    label: "Research score",
+    title: "A fixed-weight heuristic. It is not proof of manager skill; compare within category.",
+    fmt: (r) => num(r.skill_score, 0),
+  },
+  {
+    key: "suitability_score",
+    label: "Suitability score",
+    title: "A fixed-weight comparison aid, not a personalised recommendation.",
+    fmt: (r) => num(r.suitability_score, 0),
+  },
   { key: "aum", label: "AUM", fmt: (r) => tryBn(r.aum) },
 ];
 
@@ -94,6 +110,11 @@ export function FundTable({ funds }: { funds: FundRow[] }) {
         </select>
         <span className="text-sm text-muted">{rows.length} funds</span>
       </div>
+      <p className="-mt-1 mb-4 text-xs text-muted">
+        Scores are fixed-weight research heuristics, not recommendations or
+        citable evidence of individual manager skill. Compare funds within the
+        same category.
+      </p>
 
       <div className="overflow-x-auto rounded-xl border">
         <table className="w-full text-sm">
@@ -104,6 +125,7 @@ export function FundTable({ funds }: { funds: FundRow[] }) {
                 <th
                   key={c.key}
                   onClick={() => setSort(c.key)}
+                  title={c.title}
                   className="cursor-pointer select-none whitespace-nowrap px-3 py-2.5 text-right font-medium hover:text-accent"
                 >
                   {c.label}

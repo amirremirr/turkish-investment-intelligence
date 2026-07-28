@@ -117,7 +117,12 @@ export default async function FundPage({
           <div className="flex gap-4">
             {fund.skill_score != null && (
               <div className="text-right">
-                <div className="text-xs uppercase text-muted">Skill</div>
+                <div
+                  className="text-xs uppercase text-muted"
+                  title="Heuristic ranking built from alpha t-statistic, consistency, drawdown and factor independence. It is not proof of manager skill."
+                >
+                  Research score
+                </div>
                 <div className="tnum text-2xl font-semibold text-accent">
                   {num(fund.skill_score, 0)}
                 </div>
@@ -125,7 +130,12 @@ export default async function FundPage({
             )}
             {fund.suitability_score != null && (
               <div className="text-right">
-                <div className="text-xs uppercase text-muted">Suitability</div>
+                <div
+                  className="text-xs uppercase text-muted"
+                  title="Heuristic ranking for comparison, not a personalised recommendation."
+                >
+                  Suitability score
+                </div>
                 <div className="tnum text-2xl font-semibold">
                   {num(fund.suitability_score, 0)}
                 </div>
@@ -170,6 +180,13 @@ export default async function FundPage({
         </Card>
       </div>
 
+      <p className="rounded-lg border border-accent bg-accent-soft px-3 py-2 text-xs text-fg">
+        <b>Research, not a recommendation:</b> scores are fixed-weight
+        heuristics for comparing similar funds. No individual fund alpha
+        survives multiple-testing control on this sample, so neither score is
+        evidence of manager skill or a buy signal.
+      </p>
+
       {navPoints.length > 2 && (
         <Card>
           <SectionTitle
@@ -208,6 +225,12 @@ export default async function FundPage({
             (t = {num(fund.alpha_t, 1)}). Alpha t is used for scoring — a noisy
             alpha on a short history is penalized. Betas lag the market
             (+1d domestic, +2d global); see the methodology.
+          </p>
+          <p className="mt-2 text-xs text-muted">
+            This is a four-factor model, not a complete explanation of a fund:
+            bond, sector, style and liquidity exposures, fees and timing can
+            remain in the residual. For money-market funds, a positive
+            intercept can simply be deposit carry rather than manager skill.
           </p>
         </Card>
 

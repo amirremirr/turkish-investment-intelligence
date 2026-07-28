@@ -1,169 +1,238 @@
-# Methodology
+# Methodology and research standard
 
-Every metric in the platform is documented here: definition,
-assumptions, and known limitations. Rule-based outputs (memos, reports)
-only ever state numbers that trace back to these definitions.
+This document distinguishes three things that should never be conflated:
 
-## 1. Returns and risk metrics
+1. **Measured facts** — values directly calculated from stated data.
+2. **Model outputs** — estimates that depend on assumptions, benchmarks and
+   sample choices.
+3. **Research claims** — conclusions promoted beyond a chart or table.
 
-- Daily return: `r_t = NAV_t / NAV_{t-1} − 1`, computed per fund with
-  missing days left missing (no forward-fill).
-- Trailing returns: price ratio over 21/63/126/252 observations
-  (1m/3m/6m/1y).
-- Annualization: 252 trading days.
-- Volatility: `std(daily) × √252`.
-- Sharpe: `(mean(daily) − rf/252) / std(daily) × √252`. The risk-free
-  rate is an explicit parameter (presentation tables use 40% annual,
-  recorded in `system_status`); in a high-inflation market Sharpe is
-  meaningless without it.
-- Sortino: same numerator over downside-only standard deviation.
-- Max drawdown: `min(NAV / cummax(NAV) − 1)` over the full sample.
+The platform is a public-data research tool, not investment advice. A number
+may be useful before it is strong enough to support a claim.
 
-## 2. NAV timing lag (critical)
+## 1. Research status and claim language
 
-TEFAS publishes a fund's NAV dated `t` computed from the `t−1` close;
-globally priced assets add one more day (US close is after the Turkish
-close). Empirically verified:
+Every research result belongs to one status:
 
-| Test | Same-day | Lagged |
+| Status | Meaning | Product treatment |
 |---|---|---|
-| BIST30 index fund vs BIST100 | corr 0.12 | **corr 0.98, β 0.995 at lag +1** |
-| Foreign tech fund vs Nasdaq(TRY) | corr 0.13 | **corr 0.80, β 1.01 at lag +2 (5-day overlapping)** |
+| `measured` | Mechanical calculation with documented inputs. | May be displayed with date and coverage. |
+| `descriptive` | Historical pattern without a causal or predictive claim. | May be displayed with explicit scope. |
+| `exploratory` | Pattern found while searching across choices. | May appear only with an exploratory label. |
+| `validated` | Pre-specified test passes its untouched holdout and claim gate. | May be promoted, with its evidence card. |
+| `inconclusive` | Evidence is insufficient for either validation or rejection. | May be shown only as a limitation or open question. |
+| `retired` | A stronger test, corrected data, or failed holdout invalidated the claim. | Must not appear as a finding. |
 
-**Consequently: all betas lag domestic factors +1 day and global
-factors +2 days.** Any analysis correlating TEFAS NAVs with same-day
-market data is structurally wrong. See
-[research/04-nav-timing-lag.md](research/04-nav-timing-lag.md).
+No score, alpha estimate, flow, or regime label is a recommendation. Terms
+such as *proven*, *skill*, *best*, *predicts*, *causes*, *buy*, or *suitable*
+are prohibited unless a separate approved research and compliance process
+permits them.
 
-## 3. Factor model
+## 2. Reproducibility unit
 
-Per fund, OLS on **5-day overlapping compound returns** (absorbs
-residual timing noise):
+A publishable research result must record:
+
+- question and economic rationale;
+- universe and inclusion/exclusion rules;
+- source, retrieval timestamp, data snapshot hash and code revision;
+- outcome, benchmark, factor set, estimator and error treatment;
+- full hypothesis family, multiple-testing procedure and threshold;
+- train/validation/holdout boundaries fixed before holdout inspection;
+- effect size, uncertainty, sample count, practical limitations and status.
+
+Weekly frozen snapshots preserve the database and Git revision used for a
+result. A material correction preserves the prior snapshot and marks the
+affected claim as corrected or retired; it is never silently rewritten.
+
+## 3. Data availability and universe
+
+Analyses use data only when it would have been available to an observer. Fund
+NAVs, shares, AUM and investor counts are daily TEFAS observations; a result
+using date `t` must not assume it was tradable intraday at date `t`.
+
+The universe is an observed TEFAS-derived universe, not every historical
+Turkish investment vehicle. Funds closed before retained coverage are absent;
+types with incomplete ingestion must not be described as a complete market.
+KAP holdings are report-dependent and forward-built. Missing holdings or
+weights mean *unknown*, not zero.
+
+Source availability, legal posture, coverage and fee limitations are governed
+by [DATA_POLICY.md](DATA_POLICY.md). All reported figures should name their
+as-of date and coverage.
+
+## 4. Returns and risk metrics
+
+- Daily return: `r_t = NAV_t / NAV_(t-1) - 1`; missing observations remain
+  missing and are not forward-filled.
+- Trailing returns use 21, 63, 126 and 252 observed trading days.
+- Annualisation uses 252 trading days.
+- Volatility is `std(daily returns) * sqrt(252)`.
+- Sharpe is `(mean(daily return) - rf / 252) / std(daily return) * sqrt(252)`.
+  The risk-free assumption is visible because an unqualified Sharpe is not
+  meaningful in a high-inflation market.
+- Sortino uses the same excess-return numerator and downside deviation.
+- Maximum drawdown is `min(NAV / cumulative_max(NAV) - 1)` over the selected
+  history.
+
+These are backward-looking summaries, not forecasts. Short or discontinuous
+histories must show insufficient coverage rather than a precise-looking score.
+
+## 5. Timing and calendar alignment
+
+TEFAS NAV dated `t` reflects prior market information. The current production
+convention uses a +1 trading-day lag for domestic factors and +2 days for
+globally priced factors. It is validated against liquid index and foreign
+funds and avoids the known same-day mismatch.
+
+This is a common convention, not proof that every fund has the same valuation
+cut-off. Foreign holidays, derivatives, illiquid securities and fund-specific
+pricing policies can still leave timing error in the residual. New asset types
+must pass a benchmark-alignment check before their factor interpretation is
+published.
+
+## 6. Factor model and attribution
+
+The current model is a compact exposure model, estimated on five-day
+overlapping compound returns:
 
 ```
-r_fund = α + β₁·r_BIST100(+1) + β₂·r_gold_TRY(+2)
-           + β₃·r_USDTRY(+2) + β₄·r_Nasdaq_TRY(+2) + ε
+excess_fund_return = intercept
+  + beta_bist * excess_BIST100(+1)
+  + beta_gold * excess_gold_TRY(+2)
+  + beta_fx * excess_USDTRY(+2)
+  + beta_nasdaq * excess_Nasdaq_TRY(+2)
+  + residual
 ```
 
-- Gold and Nasdaq are converted to TRY before regression, so the
-  USDTRY beta captures currency exposure *beyond* what already flows
-  through TRY-priced foreign assets.
-- α is de-compounded from the K-day intercept and annualized.
-- Attribution: `contribution_i = β_i × factor_total_return_i`;
-  the residual is labeled **unexplained return** — it bundles missing
-  factors, timing, model error, fees, *and* skill. It is deliberately
-  not called alpha; separating true alpha requires holdings data.
-- Overlapping observations induce autocorrelation: point estimates are
-  consistent, but naive standard errors are understated. R² is always
-  reported alongside betas.
-- **Alpha t-statistic**: OLS standard errors with the residual variance
-  inflated by ~K (a crude Hansen–Hodrick-style correction for the
-  overlap) — deliberately conservative. Rankings use the t-statistic,
-  never raw alpha (32% of funds clear |t| > 2 on the current sample).
+Fund and factor returns are reduced by the daily deposit-rate proxy, and
+mechanical daily NAV moves beyond the reset guard are excluded. This prevents
+cash carry and obvious restructurings from becoming apparent alpha.
 
-## 4. Fund flows
+Attribution is `beta_i * factor_return_i`. The remainder is called
+**unexplained return**, not manager skill: it can contain missing factors,
+fees, timing, valuation rules, holdings differences and model error.
 
-TEFAS provides daily shares outstanding, so net flow is computed
-directly rather than inferred:
+### Diagnostics and limits
+
+The model records R-squared, an overlap-adjusted intercept t-statistic,
+Jarque-Bera, Durbin-Watson and Breusch-Pagan LM diagnostics. These are review
+signals, not a model-validation certificate. Five-day overlap, time-series
+dependence and a short sample weaken textbook p-value interpretations.
+
+The model does not yet include bond-duration/credit, sector, style, liquidity,
+participation, derivative, or fund-specific mandate factors. A low R-squared
+does not imply skill; it means the current model leaves much unexplained.
+
+No individual fund alpha currently survives Bonferroni or
+Benjamini-Hochberg false-discovery-rate control. Therefore the product must
+not present any individual intercept as citable manager skill.
+
+## 7. Fund flows
+
+Daily net flow is:
 
 ```
-flow_t = (shares_t − shares_{t-1}) × NAV_t
+flow_t = (shares_t - shares_(t-1)) * NAV_t
 ```
 
-equivalent to `AUM_t − AUM_{t-1}(1 + r_t)` but immune to valuation
-noise. Positive = money entering. Category flows are sums over funds;
-flow ratios normalize by AUM.
+It is equivalent to the AUM-flow identity under consistent reporting. Rows
+with an absolute daily NAV move above 50% are excluded as likely resets or
+restructurings.
 
-- **Price choice**: NAV at *t*, so the identity above holds exactly.
-- **Restructuring guard**: flow observations where |daily NAV return|
-  > 50% are excluded — share consolidations masquerade as flows (the
-  audit found one fictitious −₺1.29tn "flow"; see
-  [AUDIT.md §2](AUDIT.md)).
+Flow is a reported share movement, not a verified retail decision. It can
+include institutional cash management, share-class movements, corrections,
+operational transfers and delayed reporting. Category flow is normalized by
+category AUM and must not be described as investor conviction without an
+investor-level data source.
 
-## 5. Classification
+## 8. Research and inference protocol
 
-Funds → 10 categories via SPK title conventions (regex, word-boundary
-aware — "ALTINCI" ≠ "ALTIN"), falling back to the latest portfolio
-allocation when no title rule matches.
+### Exploratory work
 
-## 6. Scores
+Exploration may test multiple horizons, categories, volatility regimes and
+specifications, but every output is labelled exploratory. A selected result
+is not confirmed merely because its sign repeats in a small later period.
 
-Two deliberately separate rankings; both are cross-sectional
-percentiles within a quality-filtered universe (default: AUM ≥ ₺100mn,
-≥ 500 investors, ≥ 126 observations).
+### Claim test
 
-**Manager Skill** — "is the manager good?"
+Before viewing a holdout, a claim test specifies:
 
-| Weight | Component |
-|---|---|
-| 35% | factor-model alpha **t-statistic** (risk removed, noise penalized) |
-| 25% | consistency (share of positive rolling 63-day windows) |
-| 20% | downside (max drawdown) |
-| 20% | factor independence (1 − R²) |
+1. the question and economic mechanism;
+2. eligible universe and sample dates;
+3. outcome, horizon, benchmark and model;
+4. a single primary statistic and practical-materiality threshold;
+5. all secondary tests belonging to the same hypothesis family;
+6. train, validation and holdout boundaries; and
+7. the rule for `validated`, `inconclusive` or `retired` status.
 
-Weight sensitivity was audited: ±5–10pp perturbations leave rank
-correlation ≥ 0.995 and 15–20 of the top-20 unchanged
-([AUDIT.md §4](AUDIT.md)).
+For a family of simultaneous tests, report all tests and control either the
+family-wise error rate or false discovery rate. Applying FDR only to a chosen
+subset after exploring horizons or categories is not sufficient.
 
-**Investor Suitability** — "should a typical investor buy this?"
+### Errors and reporting
 
-| Weight | Component |
-|---|---|
-| 30% | Sharpe |
-| 20% | drawdown |
-| 20% | AUM stability (inverse weekly flow volatility) |
-| 15% | liquidity (investor count) |
-| 15% | size (AUM) |
+Time-series regressions report coefficient, standard error, Newey-West/HAC
+settings, t-statistic, sample count and R-squared. Overlapping-return results
+require overlap-aware errors. Panel claims use fund fixed effects where
+appropriate and standard errors clustered by the shared time shock.
 
-Fee data is not exposed by TEFAS's API; the liquidity/size slots stand
-in until an expense-ratio source is added.
+Every result reports effect size in economically meaningful units. Statistical
+significance without practical materiality, transaction-cost feasibility,
+capacity and stability is not a usable signal.
 
-## 7. Regression methodology (research studies)
+## 9. Scores and product outputs
 
-- Univariate OLS with intercept; β, naive t, **Newey–West t** (Bartlett
-  kernel, lag = overlap length), R², n reported.
-- Out-of-sample protocol: estimate on 2024–2025, verify sign and
-  magnitude on the 2026 holdout (`research flows-oos`).
-- Regime splits use trailing 21-day BIST100 volatility vs its median.
-- Flow series are normalized by category AUM (% of AUM per day) and
-  restructuring-guarded (§4).
-- **Cash-carry caveat**: the factor model has no risk-free factor, so
-  the intercept of deposit-like funds is dominated by interest carry —
-  100% of money-market funds show "significant alpha" by construction.
-  Interpret alpha within category (`quality --within-category`), never
-  across cash-like and risky products.
+### Research score
 
-## 8. Macro regime engine
+The public **Research score** is a category-relative, fixed-weight comparison
+aid. It combines model precision, return consistency, drawdown and factor
+independence after minimum AUM, investor-count and history filters. It is not
+a manager-skill estimate, a forecast, or a buy recommendation.
 
-TCMB EVDS series (cpi_index, policy_rate = CBRT average funding cost,
-deposit rates) classify the environment with explicit thresholds:
+### Suitability score
 
-| Dimension | Rule |
-|---|---|
-| Inflation | HIGH ≥ 40% yoy · ELEVATED 20–40% · MODERATE < 20%; trend from the previous month's yoy |
-| Rates | real rate (policy − yoy CPI): RESTRICTIVE > +5pp · NEUTRAL ±5pp · LOOSE < −5pp |
-| FX | 3m USDTRY change: STRESS > 8% · DRIFT 2–8% · STABLE < 2% |
+The **Suitability score** compares Sharpe, drawdown, AUM stability, investor
+count and size within category. It is a generic product characteristic, not a
+personal recommendation. Fee history, tax, dealing terms, investor horizon,
+portfolio context and risk capacity are outside its inputs.
 
-"Historical winners" are median monthly category fund returns within
-each regime bucket (nominal TRY). **Caveat**: the 2024–26 sample is
-almost entirely RESTRICTIVE months — regime comparisons will only
-become meaningful as the sample spans an easing cycle. CPI publishes
-with ~1 month lag; the real rate uses trailing, not expected,
-inflation.
+Weight perturbation robustness is useful but insufficient: scores must also
+be monitored for time stability, missing-data sensitivity and category
+coverage. Missing components should be disclosed rather than interpreted as
+evidence of average quality.
 
-## 9. Known limitations
+## 10. Macro regimes
 
-1. **Sample**: Jan 2024 – present (~2.5 years). Findings are one
-   regime's evidence, not universal laws.
-2. **Survivorship**: funds that closed remain in the database from
-   their live period, but pre-2024 closures are absent.
-3. **Small-fund artifacts**: private funds ("özel", often < 30
-   investors) show ±800% NAV jumps from restructurings. Quality filters
-   exclude them from rankings; raw tables keep them.
-4. **No fee data**: closet-index findings identify *index-like
-   exposure*, not net-of-fee value destruction, until expense ratios
-   are added.
-5. **Yahoo stock data**: solid for large caps; small tickers can have
-   gaps or odd split adjustments.
-6. **Statistical caveats**: overlapping returns (see §3, §7); single
-   BIST100 benchmark for excess returns regardless of category.
+The regime engine labels trailing inflation, realised policy-rate-minus-CPI,
+three-month FX movement and BIST trend using explicit thresholds. Regime
+tables are descriptive summaries of realised nominal returns. They do not
+estimate causal regime effects or forecast future category winners.
+
+The sample is dominated by restrictive, high-inflation conditions. Regime
+comparisons remain insufficiently powered until materially different cycles
+accumulate.
+
+## 11. Current claim register
+
+| Topic | Status | Allowed interpretation |
+|---|---|---|
+| NAV timing lag | `measured` | A necessary alignment correction for stated liquid-fund tests. |
+| Closet-index classification | `descriptive` | Index-like exposure classification, not a fee/value judgement. |
+| Equity-flow contrarian pattern | `exploratory` | Small historical association; not tradeable or causal. |
+| Performance chasing | `retired` | Aggregate result does not survive the fund-level panel. |
+| Individual alpha / manager skill | `inconclusive` | No individual citable result after multiple-testing control. |
+| Regime winners | `descriptive` | Small-sample historical summary, not a forecast. |
+
+## 12. Required upgrades before stronger claims
+
+1. Dated fee and expense-ratio history for net-of-fee analysis.
+2. Bond, credit, sector, style, liquidity, participation and mandate-aware
+   benchmarks.
+3. Longer history including pre-coverage closures and additional fund types.
+4. Fund-specific valuation and market-calendar alignment tests.
+5. Pre-registered claim files, immutable holdouts and automated claim-status
+   checks in CI.
+6. Rolling score-stability, benchmark-sensitivity and missingness reports.
+
+Until these are complete, the appropriate product posture is transparent
+comparison and reproducible exploration, not investment selection.

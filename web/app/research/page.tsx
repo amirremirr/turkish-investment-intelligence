@@ -19,7 +19,9 @@ const NOTES = [
   {
     n: 2,
     file: "02-performance-chasing.md",
-    title: "Investors chase quarterly winners",
+    title: "Performance chasing does not survive a fund-level test",
+    caveat:
+      "The apparent t=4.3 aggregate result falls to t=1.2 with fund fixed effects and week-clustered errors, so it is not a supported behavioural or trading claim.",
     finding:
       "Weekly flows don't respond to last week's returns, but respond strongly to trailing 63-day returns (t=4.3). Turkish investors chase what has worked for months — medium-term, not short-term, momentum chasing.",
   },
@@ -56,6 +58,14 @@ export default function ResearchPage() {
         standard errors, out-of-sample validation, and stated limitations. Full
         write-ups on GitHub.
       </p>
+      <p className="mt-3 max-w-2xl rounded-lg border border-accent bg-accent-soft p-3 text-xs text-fg">
+        <b>Research interpretation gate:</b> no individual fund alpha survives
+        Bonferroni or Benjamini-Hochberg multiple-testing control on this
+        sample. Scores are heuristic comparison aids, not proof of manager
+        skill or a recommendation. The apparent performance-chasing result
+        also falls from t=4.3 in the aggregate to t=1.2 in a fund-level
+        fixed-effects test.
+      </p>
       <p className="mt-3 max-w-2xl rounded-lg border border-dashed p-3 text-xs text-muted">
         <b>Scope honestly stated:</b> the sample is ~2.5 years inside one
         macro regime; flow effects clear significance tests but explain
@@ -83,6 +93,11 @@ export default function ResearchPage() {
                 <span className="ml-auto text-sm text-accent">Read ↗</span>
               </div>
               <p className="mt-2 pl-8 text-sm text-muted">{note.finding}</p>
+              {note.caveat && (
+                <p className="mt-2 rounded-md border border-accent bg-accent-soft p-2 text-xs text-fg">
+                  {note.caveat}
+                </p>
+              )}
             </Card>
           </a>
         ))}
