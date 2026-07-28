@@ -204,7 +204,7 @@ export async function getDataStatus(): Promise<{
         SELECT DISTINCT code FROM fund_holdings WHERE code IS NOT NULL
       ), linked_reports AS (
         SELECT COALESCE(k.code, f.code) AS code,
-          MAX(CASE WHEN k.status = 'found' THEN 1 ELSE 0 END) AS pending,
+          MAX(CASE WHEN k.status IN ('found', 'retry') THEN 1 ELSE 0 END) AS pending,
           MAX(CASE WHEN k.status = 'error' THEN 1 ELSE 0 END) AS errors
         FROM kap_disclosures k
         LEFT JOIN funds f ON f.title = k.fund_title
@@ -223,7 +223,7 @@ export async function getDataStatus(): Promise<{
         (SELECT COUNT(DISTINCT period) FROM fund_holdings) AS periods,
         (SELECT MAX(period) FROM fund_holdings) AS latest_period,
         (SELECT COUNT(*) FROM kap_disclosures WHERE status = 'parsed') AS parsed_reports,
-        (SELECT COUNT(*) FROM kap_disclosures WHERE status = 'found') AS pending_reports,
+        (SELECT COUNT(*) FROM kap_disclosures WHERE status IN ('found', 'retry')) AS pending_reports,
         (SELECT COUNT(*) FROM kap_disclosures WHERE status = 'error') AS error_reports,
         (SELECT COUNT(*) FROM kap_disclosures k
          WHERE k.code IS NULL AND NOT EXISTS (

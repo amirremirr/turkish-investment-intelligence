@@ -4,6 +4,8 @@ on:
   schedule:
     # 18:30 Istanbul = 15:30 UTC, weekdays
     - cron: "30 15 * * 1-5"
+    # 06:30 Istanbul Sunday: bounded historical KAP holdings recovery.
+    - cron: "30 3 * * 0"
   workflow_dispatch:
     inputs:
       mode:
@@ -86,7 +88,9 @@ jobs:
           python -m tefaslab publish
 
       - name: Backfill older KAP periods (walk ids backward)
-        if: github.event.inputs.mode == 'backfill'
+        if: >-
+          github.event.inputs.mode == 'backfill' ||
+          github.event.schedule == '30 3 * * 0'
         run: |
           test -f data/funds.db || {
             echo "::error::No database in cache — run mode=bootstrap first";             exit 1; }
@@ -102,7 +106,8 @@ jobs:
         if: >-
           github.event.inputs.mode != 'bootstrap' &&
           github.event.inputs.mode != 'reparse' &&
-          github.event.inputs.mode != 'backfill'
+          github.event.inputs.mode != 'backfill' &&
+          github.event.schedule != '30 3 * * 0'
         run: |
           test -f data/funds.db || {
             echo "::error::No database in cache — run this workflow "\
@@ -113,7 +118,8 @@ jobs:
         if: >-
           github.event.inputs.mode != 'bootstrap' &&
           github.event.inputs.mode != 'reparse' &&
-          github.event.inputs.mode != 'backfill'
+          github.event.inputs.mode != 'backfill' &&
+          github.event.schedule != '30 3 * * 0'
         run: |
           if [ "$(date +%d)" -le 03 ]; then
             python -m tefaslab report

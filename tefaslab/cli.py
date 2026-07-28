@@ -232,6 +232,15 @@ def cmd_holdings(args) -> None:
     elif args.action == "reparse":
         out = kap.reparse(conn, limit=args.count)
         print(out)
+    elif args.action == "retry":
+        out = kap.requeue_errors(conn, limit=args.count)
+        out.update(kap.parse_pending(conn, limit=args.count))
+        print(out)
+    elif args.action == "alias":
+        if not args.arg or not args.title:
+            raise ValueError("holdings alias needs a fund code and --title")
+        kap.set_title_alias(conn, args.title, args.arg, args.note)
+        print(f"alias saved: {args.title!r} -> {args.arg.upper()}")
     elif args.action == "who":
         print(kap.who_owns(conn, args.arg).round(2).to_string(index=False))
     elif args.action == "fund":
@@ -556,12 +565,14 @@ def main() -> None:
     p.set_defaults(func=cmd_intraday_cloud)
 
     p = sub.add_parser("holdings", help="KAP fund holdings pipeline")
-    p.add_argument("action", choices=["scan", "parse", "reparse",
+    p.add_argument("action", choices=["scan", "parse", "reparse", "retry", "alias",
                                       "backfill", "who", "fund", "stats",
                                       "crowding", "active", "attrib"])
     p.add_argument("arg", nargs="?", help="ticker (who) / fund code (fund)")
     p.add_argument("--start", type=int, help="scan start id")
     p.add_argument("--count", type=int, default=100)
+    p.add_argument("--title", help="KAP title for the operator-reviewed alias action")
+    p.add_argument("--note", help="optional rationale recorded with a KAP title alias")
     p.set_defaults(func=cmd_holdings)
 
     p = sub.add_parser("evds", help="fetch TCMB macro series (needs "

@@ -409,6 +409,45 @@ def test_kap_coverage_summary_classifies_missing_books(tmp_conn):
     assert out["latest_period"] == "2026-07"
 
 
+def test_kap_title_resolution_is_normalised_but_never_fuzzy(tmp_conn):
+    from tefaslab import kap
+
+    tmp_conn.executescript(kap.SCHEMA)
+    tmp_conn.execute("INSERT INTO funds VALUES ('ABC', 'İŞ PORTFÖY HİSSE FONU', "
+                     "'YAT', 'Equity Turkey')")
+    tmp_conn.commit()
+    exact = {"İŞ PORTFÖY HİSSE FONU": "ABC"}
+    normalised = {kap._normalise_title("İŞ PORTFÖY HİSSE FONU"): {"ABC"}}
+    assert kap._resolve_fund_code(
+        None, "IS PORTFOY HISSE FONU", {"ABC"}, exact, normalised, {}) == "ABC"
+    # Two canonical matches are ambiguous and must remain uncovered.
+    normalised[kap._normalise_title("OTHER FON")] = {"ABC", "XYZ"}
+    assert kap._resolve_fund_code(
+        None, "OTHER FON", {"ABC", "XYZ"}, exact, normalised, {}) is None
+
+    kap.set_title_alias(tmp_conn, "KAP İŞ HİSSE", "ABC", "verified against PDF header")
+    aliases = {title: code for title, code in tmp_conn.execute(
+        "SELECT kap_title, code FROM kap_fund_aliases")}
+    assert kap._resolve_fund_code(
+        None, "KAP İŞ HİSSE", {"ABC"}, exact, normalised, aliases) == "ABC"
+
+
+def test_kap_legacy_and_operator_retry_queues_are_bounded(tmp_conn):
+    from tefaslab import kap
+
+    tmp_conn.executescript(kap.SCHEMA)
+    tmp_conn.executemany(
+        "INSERT INTO kap_disclosures (id, status, last_error) VALUES (?,?,?)",
+        [(1, "error", None), (2, "error", "unsupported template"), (3, "parsed", None)],
+    )
+    tmp_conn.commit()
+    assert kap.requeue_legacy_errors(tmp_conn, limit=10) == {"requeued": 1}
+    assert tmp_conn.execute("SELECT status FROM kap_disclosures WHERE id=1").fetchone()[0] == "retry"
+    assert tmp_conn.execute("SELECT status FROM kap_disclosures WHERE id=2").fetchone()[0] == "error"
+    assert kap.requeue_errors(tmp_conn, limit=10) == {"requeued": 1}
+    assert tmp_conn.execute("SELECT status FROM kap_disclosures WHERE id=2").fetchone()[0] == "retry"
+
+
 def test_kap_scan_cursor_advances(monkeypatch):
     """Discovery stalled because the scan restarted at MAX(found id): a
     window holding no fund report left the cursor parked and the same ids
