@@ -228,7 +228,14 @@ export async function getDataStatus(): Promise<{
         (SELECT COUNT(*) FROM kap_disclosures k
          WHERE k.code IS NULL AND NOT EXISTS (
            SELECT 1 FROM funds f WHERE f.title = k.fund_title
-         )) AS unlinked_reports
+         )) AS unlinked_reports,
+        (SELECT COUNT(*) FROM funds
+         WHERE category IN ('Equity Turkey', 'Foreign Equity', 'Mixed', 'Variable'))
+          AS equity_oriented_universe,
+        (SELECT COUNT(DISTINCT h.code) FROM fund_holdings h
+         JOIN funds f ON f.code = h.code
+         WHERE f.category IN ('Equity Turkey', 'Foreign Equity', 'Mixed', 'Variable'))
+          AS equity_oriented_parsed
       FROM universe u
       LEFT JOIN parsed p ON p.code = u.code
       LEFT JOIN linked_reports r ON r.code = u.code`;
@@ -245,11 +252,14 @@ export async function getDataStatus(): Promise<{
       pendingReports: Number(r[0].pending_reports),
       errorReports: Number(r[0].error_reports),
       unlinkedReports: Number(r[0].unlinked_reports),
+      equityOrientedUniverse: Number(r[0].equity_oriented_universe),
+      equityOrientedParsed: Number(r[0].equity_oriented_parsed),
     };
   }, {
     universe: 0, parsedFunds: 0, pendingFunds: 0, errorFunds: 0,
     noResolvedReport: 0, withWeights: 0, periods: 0, latestPeriod: null,
     parsedReports: 0, pendingReports: 0, errorReports: 0, unlinkedReports: 0,
+    equityOrientedUniverse: 0, equityOrientedParsed: 0,
   });
 
   const cpi = await one(async () => {
@@ -294,7 +304,7 @@ export async function getDataStatus(): Promise<{
       },
       {
         name: "Fund stock-level holdings (KAP)",
-        coverage: `${intFmt(hold.parsedFunds)} / ${intFmt(hold.universe)} funds parsed · ${intFmt(hold.withWeights)} with weights · ${intFmt(hold.periods)} period${hold.periods === 1 ? "" : "s"}`,
+        coverage: `${intFmt(hold.parsedFunds)} / ${intFmt(hold.universe)} funds parsed · ${intFmt(hold.equityOrientedParsed)} / ${intFmt(hold.equityOrientedUniverse)} equity-oriented · ${intFmt(hold.withWeights)} with weights · ${intFmt(hold.periods)} period${hold.periods === 1 ? "" : "s"}`,
         asOf: hold.latestPeriod,
         served: hold.parsedFunds > 0,
         note: `Coverage audit: ${intFmt(hold.pendingFunds)} funds have a linked KAP report waiting to parse; ${intFmt(hold.errorFunds)} have only parser errors; ${intFmt(hold.noResolvedReport)} have no resolved KAP report. Ledger: ${intFmt(hold.parsedReports)} reports parsed, ${intFmt(hold.pendingReports)} pending, ${intFmt(hold.errorReports)} errors, ${intFmt(hold.unlinkedReports)} not linked to a fund. Holdings are forward-built monthly disclosures, not confirmed zeros for uncovered funds.`,

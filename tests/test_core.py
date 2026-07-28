@@ -407,6 +407,8 @@ def test_kap_coverage_summary_classifies_missing_books(tmp_conn):
     assert out["error_reports"] == 2
     assert out["unlinked_reports"] == 1
     assert out["latest_period"] == "2026-07"
+    assert out["equity_oriented_universe"] == 4
+    assert out["equity_oriented_parsed"] == 1
 
 
 def test_kap_title_resolution_is_normalised_but_never_fuzzy(tmp_conn):
@@ -446,6 +448,39 @@ def test_kap_legacy_and_operator_retry_queues_are_bounded(tmp_conn):
     assert tmp_conn.execute("SELECT status FROM kap_disclosures WHERE id=2").fetchone()[0] == "error"
     assert kap.requeue_errors(tmp_conn, limit=10) == {"requeued": 1}
     assert tmp_conn.execute("SELECT status FROM kap_disclosures WHERE id=2").fetchone()[0] == "retry"
+
+
+def test_kap_export_probe_skips_known_empty_ids_and_retries_flaky_ones(monkeypatch):
+    from tefaslab import kap
+
+    class Response:
+        def __init__(self, status_code, content):
+            self.status_code = status_code
+            self.content = content
+
+    class Session:
+        def __init__(self, responses):
+            self.responses = iter(responses)
+            self.calls = []
+
+        def get(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            return next(self.responses)
+
+    monkeypatch.setattr(kap.time, "sleep", lambda *_: None)
+    absent = Session([Response(404, b"")])
+    result, retries = kap._fetch_export(absent, 123)
+    assert result.status_code == 404
+    assert retries == 0
+    assert len(absent.calls) == 1
+    assert absent.calls[0][1]["timeout"] == kap.EXPORT_TIMEOUT
+
+    flaky = Session([Response(200, b""), Response(200, b"x" * 600)])
+    result, retries = kap._fetch_export(flaky, 124)
+    assert result.status_code == 200
+    assert len(result.content) == 600
+    assert retries == 1
+    assert len(flaky.calls) == 2
 
 
 def test_kap_scan_cursor_advances(monkeypatch):

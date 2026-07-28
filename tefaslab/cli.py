@@ -27,6 +27,12 @@ def _parse_date(s: str) -> date:
     return date.fromisoformat(s)
 
 
+def _console_safe(text: str) -> str:
+    """Keep diagnostics usable in legacy Windows code pages."""
+    encoding = sys.stdout.encoding or "utf-8"
+    return text.encode(encoding, errors="backslashreplace").decode(encoding)
+
+
 def cmd_ingest(args) -> None:
     totals = ingest.ingest_range(
         args.start, args.end, fund_type=args.type, fund_code=args.fund or "",
@@ -241,6 +247,10 @@ def cmd_holdings(args) -> None:
             raise ValueError("holdings alias needs a fund code and --title")
         kap.set_title_alias(conn, args.title, args.arg, args.note)
         print(f"alias saved: {args.title!r} -> {args.arg.upper()}")
+    elif args.action == "errors":
+        rows = kap.error_report(conn, limit=args.count)
+        text = pd.DataFrame(rows).to_string(index=False) if rows else "no terminal errors"
+        print(_console_safe(text))
     elif args.action == "who":
         print(kap.who_owns(conn, args.arg).round(2).to_string(index=False))
     elif args.action == "fund":
@@ -254,6 +264,8 @@ def cmd_holdings(args) -> None:
         print(
             "coverage: "
             f"{coverage['parsed_funds']:,}/{coverage['universe']:,} parsed books | "
+            f"{coverage['equity_oriented_parsed']:,}/"
+            f"{coverage['equity_oriented_universe']:,} equity-oriented | "
             f"{coverage['pending_funds']:,} linked pending | "
             f"{coverage['error_funds']:,} linked parser errors | "
             f"{coverage['no_resolved_report']:,} no resolved KAP report"
@@ -565,7 +577,7 @@ def main() -> None:
     p.set_defaults(func=cmd_intraday_cloud)
 
     p = sub.add_parser("holdings", help="KAP fund holdings pipeline")
-    p.add_argument("action", choices=["scan", "parse", "reparse", "retry", "alias",
+    p.add_argument("action", choices=["scan", "parse", "reparse", "retry", "alias", "errors",
                                       "backfill", "who", "fund", "stats",
                                       "crowding", "active", "attrib"])
     p.add_argument("arg", nargs="?", help="ticker (who) / fund code (fund)")
