@@ -12,9 +12,10 @@ production ([tefaslab/kap.py](../tefaslab/kap.py)).*
 | PDF download + Java-wrapper stripping | ✅ working |
 | Table parser (`parse_pdf_holdings`) | ✅ working — position-based row reconstruction; on the test fund: 89/89 holdings, 0 missing values, **weights sum to 98.1%** (rest is cash) |
 | `fund_holdings` table + `kap_disclosures` ledger | ✅ in the shared DB |
+| Coverage audit | ✅ classifies every fund as parsed, linked-pending, parser-error, or no resolved KAP report; shown on the public data-status page |
 | Queries: `holdings who ASELS`, `holdings fund IJZ`, `holdings stats` | ✅ CLI |
 | Analytics: `crowding` (breadth of ownership), `active` (peer active share), `attrib` (stock-level contribution) | ✅ [ownership.py](../tefaslab/ownership.py) — each reports its own universe size |
-| Nightly integration | ✅ pipeline scans forward from the id frontier (≤2,500 ids/night) and parses new reports |
+| Nightly integration | ✅ pipeline scans forward from the ID frontier within a 25-minute wall-clock budget and parses new reports |
 
 ## Upsides (why this is worth it)
 
@@ -64,6 +65,10 @@ production ([tefaslab/kap.py](../tefaslab/kap.py)).*
    prices; foreign holdings (US/EU) land in the residual until foreign
    price series are added. The output states explained-vs-actual
    explicitly.
+10. **Coverage is not binary.** A fund with no displayed book may have no
+    resolved KAP report, a discovered report waiting to parse, or a parser
+    error. The data-status page and `holdings stats` report these separately;
+    only a parsed book is treated as holdings coverage.
 
 ## What was established
 

@@ -367,6 +367,48 @@ def test_kap_parser_on_fixture():
     assert top["ticker"] == "AVGO"          # Broadcom, 5.98% in fixture
 
 
+def test_kap_coverage_summary_classifies_missing_books(tmp_conn):
+    """A missing book must distinguish no report from pending/error reports."""
+    from tefaslab import kap
+
+    tmp_conn.executescript(kap.SCHEMA)
+    tmp_conn.executemany(
+        "INSERT INTO funds VALUES (?,?,?,?)",
+        [
+            ("AAA", "Alpha Fund", "YAT", "Equity Turkey"),
+            ("BBB", "Beta Fund", "YAT", "Equity Turkey"),
+            ("CCC", "Gamma Fund", "YAT", "Equity Turkey"),
+            ("DDD", "Delta Fund", "YAT", "Equity Turkey"),
+        ],
+    )
+    tmp_conn.execute(
+        "INSERT INTO fund_holdings (code, period, isin) VALUES "
+        "('AAA', '2026-07', 'TR0000000001')"
+    )
+    tmp_conn.executemany(
+        "INSERT INTO kap_disclosures (id, fund_title, status) VALUES (?,?,?)",
+        [
+            (1, "Alpha Fund", "parsed"),
+            (2, "Beta Fund", "found"),
+            (3, "Gamma Fund", "error"),
+            (4, "Unmatched Fund", "error"),
+        ],
+    )
+    tmp_conn.commit()
+
+    out = kap.coverage_summary(tmp_conn)
+    assert out["universe"] == 4
+    assert out["parsed_funds"] == 1
+    assert out["pending_funds"] == 1
+    assert out["error_funds"] == 1
+    assert out["no_resolved_report"] == 1
+    assert out["parsed_reports"] == 1
+    assert out["pending_reports"] == 1
+    assert out["error_reports"] == 2
+    assert out["unlinked_reports"] == 1
+    assert out["latest_period"] == "2026-07"
+
+
 def test_kap_scan_cursor_advances(monkeypatch):
     """Discovery stalled because the scan restarted at MAX(found id): a
     window holding no fund report left the cursor parked and the same ids
