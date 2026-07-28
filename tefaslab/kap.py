@@ -1280,8 +1280,8 @@ def daily_update(conn: sqlite3.Connection, max_ids: int = 5000) -> dict:
 
 def collect_monthly(conn: sqlite3.Connection, period: str | None = None,
                     max_ids: int = 5000, mkk_batches: int = 50,
-                    mkk_detail_limit: int = 180,
-                    mkk_parse_limit: int = 120) -> dict:
+                    mkk_detail_limit: int = 220,
+                    mkk_parse_limit: int = 150) -> dict:
     """Collect the latest monthly books through the official MKK index.
 
     The client spaces calls 10.5 seconds apart, respecting the product quota.
