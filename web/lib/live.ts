@@ -15,11 +15,24 @@ export type LiveMover = {
   turnover_mn: number;
   vol_vs_20d: number;
 };
+export type ExhaustionCandidate = {
+  ticker: string;
+  title: string;
+  opening_gap_pct: number;
+  previous_day_return_pct: number;
+  turnover_shock: number;
+};
+export type ExhaustionWatch = {
+  status?: string;
+  source_note?: string;
+  candidates?: ExhaustionCandidate[];
+};
 export type Intraday = {
   ts: string;
   snapshot?: LiveSnapshot;
   breadth?: LiveBreadth;
   movers?: Record<string, LiveMover[]>;
+  exhaustion_watch?: ExhaustionWatch;
 };
 
 // Return the intraday payload only if it is recent enough to show as

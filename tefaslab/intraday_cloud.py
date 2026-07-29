@@ -23,6 +23,7 @@ import yfinance as yf
 from sqlalchemy import create_engine, text
 
 from .publish import serving_url
+from .exhaustion import build_watch
 
 
 def _clean(o):
@@ -66,6 +67,12 @@ def refresh(batch: int = 200) -> dict:
                 """
             ),
             conn, params={"cutoff": cutoff}).set_index("ticker")
+        history_cutoff = (date.fromisoformat(max_date) - timedelta(days=60)).isoformat()
+        history = pd.read_sql_query(
+            text("SELECT p.ticker, p.date, p.close, p.volume, s.title "
+                 "FROM stock_prices p LEFT JOIN stocks s ON s.ticker=p.ticker "
+                 "WHERE p.date >= :cutoff ORDER BY p.ticker, p.date"),
+            conn, params={"cutoff": history_cutoff})
 
     tickers = ref.index.tolist()
     quotes = []
@@ -79,17 +86,18 @@ def refresh(batch: int = 200) -> dict:
                 bar = data[f"{t}.IS"].dropna(how="all")
                 if bar.empty:
                     continue
-                quotes.append((t, float(bar["Close"].iloc[-1]),
+                quotes.append((t, float(bar["Open"].iloc[-1]), float(bar["Close"].iloc[-1]),
                                float(bar["Volume"].iloc[-1])))
             except KeyError:
                 continue
 
-    q = pd.DataFrame(quotes, columns=["ticker", "price", "volume"]) \
+    q = pd.DataFrame(quotes, columns=["ticker", "open", "price", "volume"]) \
         .set_index("ticker")
     live = q.join(ref, how="inner")
     live["chg_pct"] = (live["price"] / live["prev_close"] - 1) * 100
     live["turnover_mn"] = live["price"] * live["volume"] / 1e6
     live["vol_vs_20d"] = live["volume"] / live["avg_vol"]
+    exhaustion_watch = build_watch(history, live)
     liquid = live[live["turnover_mn"] >= 10]
 
     breadth = {
@@ -130,7 +138,12 @@ def refresh(batch: int = 200) -> dict:
 
     payload = json.dumps(
         _clean({"ts": now, "quotes": len(quotes), "breadth": breadth,
-                "movers": movers, "snapshot": snap}),
+                "movers": movers, "snapshot": snap,
+                "exhaustion_watch": {
+                    "status": "experimental risk context; not investment advice or a trade signal",
+                    "source_note": "Yahoo daily-bar open, delayed/revisable; no auction queue, spread, or fill data.",
+                    "candidates": exhaustion_watch,
+                }}),
         ensure_ascii=False, allow_nan=False, default=str)
 
     with engine.begin() as conn:

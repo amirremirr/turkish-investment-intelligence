@@ -17,7 +17,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from tefaslab import attention, classify, db, evds, flows, metrics, research  # noqa: E402
+from tefaslab import attention, classify, db, evds, exhaustion, flows, metrics, research  # noqa: E402
 from tefaslab.kap import parse_pdf_holdings  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -94,6 +94,17 @@ def test_attention_study_uses_next_session_open_without_lookahead(tmp_path):
     freshness = result["freshness_splits"]
     assert (freshness["events"] > 0).all()
     assert (freshness["portfolios"] <= freshness["events"]).all()
+
+
+def test_exhaustion_watch_requires_crowded_prior_day_and_opening_gap():
+    dates = pd.bdate_range("2026-01-01", periods=22)
+    history = pd.DataFrame({"ticker": "AAA", "date": dates,
+                            "close": [100.0] * 20 + [105.0, 113.4],
+                            "volume": [1_000.0] * 21 + [3_000.0], "title": "Alpha"})
+    live = pd.DataFrame({"open": [115.0], "title": ["Alpha"]}, index=["AAA"])
+    rows = exhaustion.build_watch(history, live)
+    assert len(rows) == 1
+    assert rows[0]["opening_gap_pct"] > 1 and rows[0]["turnover_shock"] >= 2
 
 
 # --------------------------------------------------------- classifier

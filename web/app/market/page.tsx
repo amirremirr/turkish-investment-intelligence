@@ -90,6 +90,35 @@ export default async function MarketPage() {
         </div>
       )}
 
+      {live?.exhaustion_watch?.candidates && live.exhaustion_watch.candidates.length > 0 && (
+        <Card>
+          <SectionTitle hint="experimental · delayed daily-open data">
+            Momentum exhaustion watch
+          </SectionTitle>
+          <p className="mb-3 text-sm text-muted">
+            These shares had a crowded prior-day move and opened at least 1% higher.
+            This is risk context for avoiding a chase—not a forecast, recommendation,
+            or evidence that a short trade is executable.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr className="border-b text-left text-muted">
+                <th className="py-2 font-medium">Stock</th><th className="py-2 text-right font-medium">Open gap</th>
+                <th className="py-2 text-right font-medium">Prior day</th><th className="py-2 text-right font-medium">Turnover</th>
+              </tr></thead>
+              <tbody>{live.exhaustion_watch.candidates.map((row) => (
+                <tr key={row.ticker} className="border-b last:border-0">
+                  <td className="py-2"><Link className="font-medium text-accent hover:underline" href={`/stocks/${row.ticker}`}>{row.ticker}</Link><span className="ml-2 text-muted">{row.title}</span></td>
+                  <td className="tnum py-2 text-right text-neg">+{num(row.opening_gap_pct, 1)}%</td>
+                  <td className="tnum py-2 text-right">+{num(row.previous_day_return_pct, 1)}%</td>
+                  <td className="tnum py-2 text-right">{num(row.turnover_shock, 1)}×</td>
+                </tr>))}</tbody>
+            </table>
+          </div>
+          <p className="mt-3 text-xs text-muted">{live.exhaustion_watch.source_note}</p>
+        </Card>
+      )}
+
       {mood.reading && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Card>
