@@ -2,8 +2,8 @@ name: Continue validated monthly holdings recovery
 
 on:
   # The validation workflow is deliberately short. This continuation is only
-  # started after it completes successfully, and only when the saved database
-  # contains actual portfolio reports for the target month.
+  # started after it completes successfully and demonstrates either a target
+  # report or substantial, error-free cursor progress through the MKK index.
   workflow_run:
     workflows: ["Monthly holdings recovery"]
     types: [completed]
@@ -47,7 +47,7 @@ jobs:
         run: |
           test -f data/funds.db || { echo "::error::validation database was not saved"; exit 1; }
           test -n "$SUPABASE_DB_URL" || { echo "::error::SUPABASE_DB_URL is required"; exit 1; }
-      - name: Require evidence before long recovery
+      - name: Require healthy evidence before long recovery
         id: coverage
         run: |
           python - <<'PY'
@@ -62,11 +62,30 @@ jobs:
               "WHERE reporting_period=? AND status IN ('found', 'parsed')",
               (period,),
           ).fetchone()[0]
+          state = conn.execute(
+              "SELECT head_index, cursor FROM mkk_monthly_scan_state WHERE period=?",
+              (period,),
+          ).fetchone()
+          scanned = max(0, int(state[0]) - int(state[1])) if state else 0
+          errors = conn.execute(
+              "SELECT COUNT(*) FROM mkk_disclosures WHERE status='error'"
+          ).fetchone()[0]
           conn.close()
-          proceed = "true" if reports else "false"
-          print(f"MKK validation: period={period}, discovered fund reports={reports}")
+          # June reports may be many thousands of disclosure indexes behind
+          # the live head. A clean two-window validation that advances at least
+          # 1,000 indexes is useful evidence even before it reaches that wave.
+          healthy_progress = scanned >= 1000 and errors == 0
+          proceed = "true" if reports or healthy_progress else "false"
+          print(
+              "MKK validation: "
+              f"period={period}, discovered fund reports={reports}, "
+              f"indexes scanned={scanned}, errors={errors}, proceed={proceed}"
+          )
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"proceed={proceed}\nperiod={period}\nreports={reports}\n")
+              output.write(
+                  f"proceed={proceed}\nperiod={period}\nreports={reports}\n"
+                  f"scanned={scanned}\nerrors={errors}\n"
+              )
           PY
 
   first-extended-pass:
