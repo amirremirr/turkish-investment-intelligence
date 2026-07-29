@@ -55,6 +55,7 @@ def build_watch(history: pd.DataFrame, live: pd.DataFrame, limit: int = 10) -> l
             reasons.append("multiple prior up days")
         rows.append({
             "ticker": ticker, "title": str(live.loc[ticker].get("title") or "")[:40],
+            "previous_close_adjusted": round(float(yesterday.close), 4),
             "opening_price": round(float(opening), 2),
             "opening_gap_pct": round(float(gap * 100), 2),
             "previous_day_return_pct": round(float(daily_return * 100), 2),

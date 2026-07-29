@@ -55,16 +55,26 @@ CREATE TABLE IF NOT EXISTS paper_trades (
 );
 CREATE INDEX IF NOT EXISTS idx_signal_observations_date
 ON signal_observations(signal_date, signal_version);
+CREATE TABLE IF NOT EXISTS signal_intraday_bars (
+    signal_id TEXT NOT NULL, ticker TEXT NOT NULL, bar_timestamp TEXT NOT NULL,
+    open REAL, high REAL, low REAL, close REAL, volume REAL,
+    provider TEXT NOT NULL, price_basis TEXT NOT NULL, retrieved_at TEXT NOT NULL,
+    PRIMARY KEY (signal_id, bar_timestamp)
+);
 """
 
 
-def _record_signal_observations(engine, candidates: list[dict], now: str) -> int:
-    """Idempotently persist research observations; never create trade claims."""
-    rows = ledger_rows(candidates, now)
+def _ensure_signal_tables(engine) -> None:
     with engine.begin() as conn:
         for ddl in LEDGER_DDL.strip().split(";\n"):
             if ddl.strip():
                 conn.execute(text(ddl))
+
+
+def _record_signal_observations(engine, rows: list[dict]) -> int:
+    """Idempotently persist research observations; never create trade claims."""
+    _ensure_signal_tables(engine)
+    with engine.begin() as conn:
         for row in rows:
             conn.execute(text("""
                 INSERT INTO signal_observations
@@ -75,6 +85,47 @@ def _record_signal_observations(engine, candidates: list[dict], now: str) -> int
                 ON CONFLICT (signal_id) DO NOTHING
             """), row)
     return len(rows)
+
+
+def _capture_signal_intraday_bars(engine, rows: list[dict], now: str) -> int:
+    """Persist 5-minute bars only for prospective watch observations.
+
+    Yahoo's intraday history is short-lived; capturing it at alert time is the
+    only way to support a later opening-path study without pretending daily
+    OHLCV answers intraday questions.
+    """
+    if not rows:
+        return 0
+    _ensure_signal_tables(engine)
+    ids = {row["ticker"]: row["signal_id"] for row in rows}
+    data = yf.download([f"{ticker}.IS" for ticker in ids], period="1d", interval="5m",
+                       group_by="ticker", auto_adjust=True, progress=False, threads=True)
+    bars = []
+    for ticker, signal_id in ids.items():
+        try:
+            frame = data[f"{ticker}.IS"].dropna(how="all")
+        except KeyError:
+            continue
+        for timestamp, bar in frame.iterrows():
+            bars.append({"signal_id": signal_id, "ticker": ticker,
+                         "bar_timestamp": str(timestamp), "open": float(bar["Open"]),
+                         "high": float(bar["High"]), "low": float(bar["Low"]),
+                         "close": float(bar["Close"]), "volume": float(bar["Volume"]),
+                         "provider": "Yahoo Finance", "price_basis": "adjusted",
+                         "retrieved_at": now})
+    if bars:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO signal_intraday_bars
+                (signal_id, ticker, bar_timestamp, open, high, low, close, volume,
+                 provider, price_basis, retrieved_at)
+                VALUES (:signal_id, :ticker, :bar_timestamp, :open, :high, :low, :close, :volume,
+                        :provider, :price_basis, :retrieved_at)
+                ON CONFLICT (signal_id, bar_timestamp) DO UPDATE SET
+                high=excluded.high, low=excluded.low, close=excluded.close,
+                volume=excluded.volume, retrieved_at=excluded.retrieved_at
+            """), bars)
+    return len(bars)
 
 
 def refresh(batch: int = 200) -> dict:
@@ -117,7 +168,7 @@ def refresh(batch: int = 200) -> dict:
     for i in range(0, len(tickers), batch):
         chunk = [f"{t}.IS" for t in tickers[i:i + batch]]
         data = yf.download(chunk, period="1d", interval="1d",
-                           group_by="ticker", auto_adjust=False,
+                           group_by="ticker", auto_adjust=True,
                            progress=False, threads=True)
         for t in tickers[i:i + batch]:
             try:
@@ -136,7 +187,9 @@ def refresh(batch: int = 200) -> dict:
     live["turnover_mn"] = live["price"] * live["volume"] / 1e6
     live["vol_vs_20d"] = live["volume"] / live["avg_vol"]
     exhaustion_watch = build_watch(history, live)
-    recorded_signals = _record_signal_observations(engine, exhaustion_watch, now)
+    signal_rows = ledger_rows(exhaustion_watch, now)
+    recorded_signals = _record_signal_observations(engine, signal_rows)
+    captured_bars = _capture_signal_intraday_bars(engine, signal_rows, now)
     liquid = live[live["turnover_mn"] >= 10]
 
     breadth = {
@@ -180,7 +233,11 @@ def refresh(batch: int = 200) -> dict:
                 "movers": movers, "snapshot": snap,
                 "exhaustion_watch": {
                     "status": "experimental risk context; not investment advice or a trade signal",
-                    "source_note": "Yahoo daily-bar open, delayed/revisable; no auction queue, spread, or fill data.",
+                    "state": "active" if exhaustion_watch else "no qualifying events",
+                    "provider": "Yahoo Finance",
+                    "price_basis": "adjusted",
+                    "gap_calculation_timestamp": now,
+                    "source_note": "Yahoo adjusted daily-bar open, delayed/revisable; no auction queue, spread, or fill data.",
                     "candidates": exhaustion_watch,
                 }}),
         ensure_ascii=False, allow_nan=False, default=str)
@@ -194,6 +251,7 @@ def refresh(batch: int = 200) -> dict:
                 timespec="seconds")})
     engine.dispose()
     return {"ts": now, "quotes": len(quotes), "recorded_signals": recorded_signals,
+            "captured_intraday_bars": captured_bars,
             **breadth}
 
 
