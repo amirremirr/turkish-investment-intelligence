@@ -17,7 +17,7 @@ import pandas as pd
 
 import sys
 
-from . import (benchmarks, classify, compare, db, evds, factors, flows,
+from . import (attention, benchmarks, classify, compare, db, evds, factors, flows,
                health, ingest, intraday, kap, memo, metrics, ownership,
                pipeline, publish, quality, regime, report, research,
                rigor, rolling, smartmoney, stocks)
@@ -427,7 +427,24 @@ def cmd_memo(args) -> None:
 def cmd_research(args) -> None:
     conn = db.connect()
     pd.set_option("display.width", 220)
-    if args.study == "flows":
+    if args.study == "attention":
+        result = attention.run_attention_momentum_study(
+            conn, start=args.start.isoformat() if args.start else None,
+            end=args.end.isoformat() if args.end else None,
+            min_turnover=args.min_turnover * 1_000_000,
+            split=args.split,
+        )
+        summary = result["summary"]
+        assert isinstance(summary, pd.DataFrame)
+        primary = summary[(summary["outcome"] == "open_to_close_1")
+                          & (summary["round_trip_cost_bps"] == 50)]
+        print("Daily BIST attention--momentum study (exploratory).\n"
+              "Signal at close t; executable primary return is next open to close.\n")
+        print(primary.round(4).to_string(index=False))
+        if args.save:
+            path = attention.write_attention_outputs(result, args.save)
+            print(f"\nSaved full scenario outputs to {path.parent}")
+    elif args.study == "flows":
         print(f"Do {args.category} fund flows predict future BIST100 "
               "returns?\n(beta = % BIST move per 1% AUM flow; caveat: "
               "overlapping horizons inflate t-stats)\n")
@@ -692,7 +709,7 @@ def main() -> None:
     p.set_defaults(func=cmd_memo)
 
     p = sub.add_parser("research", help="run a research study")
-    p.add_argument("study", choices=["flows", "flows-by-category",
+    p.add_argument("study", choices=["attention", "flows", "flows-by-category",
                                      "flows-oos", "chasing", "closet",
                                      "diagnostics", "gate", "catret",
                                      "mandate", "panel", "rigor"])
@@ -701,6 +718,15 @@ def main() -> None:
                    help="volatility-regime subsample (flows study)")
     p.add_argument("--min-aum", type=float, default=100,
                    help="minimum AUM in millions TRY (closet study)")
+    p.add_argument("--start", type=_parse_date,
+                   help="start date for attention study (default: all data)")
+    p.add_argument("--end", type=_parse_date,
+                   help="end date for attention study (default: all data)")
+    p.add_argument("--split", default="2026-01-01",
+                   help="fixed discovery/validation split for attention study")
+    p.add_argument("--min-turnover", type=float, default=1.0,
+                   help="minimum prior 20d median turnover in TRY millions (attention study)")
+    p.add_argument("--save", help="directory for attention-study CSV and Markdown outputs")
     p.set_defaults(func=cmd_research)
 
     p = sub.add_parser("health", help="data quality checks")
