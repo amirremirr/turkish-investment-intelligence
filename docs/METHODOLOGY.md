@@ -223,6 +223,7 @@ accumulate.
 | Individual alpha / manager skill | `inconclusive` | No individual citable result after multiple-testing control. |
 | Regime winners | `descriptive` | Small-sample historical summary, not a forecast. |
 | Daily stock attention--momentum | `exploratory` | Historical daily-OHLCV test; no trade or fill claim. |
+| Moderate momentum without attention crowding | `exploratory post-hoc` | Separate frozen scenario family; only future sessions after specification merge can serve as an independent holdout. |
 
 ## 12. Required upgrades before stronger claims
 

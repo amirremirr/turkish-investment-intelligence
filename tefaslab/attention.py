@@ -23,11 +23,13 @@ class AttentionScenario:
 
     name: str
     description: str
-    top_n: int
-    return_rank_min: float = 0.90
+    top_n: int | None
+    return_rank_min: float | None = 0.90
     return_min: float | None = 0.02
     return_max: float | None = 0.09
     turnover_shock_min: float | None = 2.0
+    turnover_shock_max: float | None = None
+    prior_median_turnover_min: float | None = None
     close_strength_min: float | None = 0.75
     max_previous_positive_days: int | None = 3
     score: str = "attention"
@@ -53,6 +55,28 @@ DEFAULT_SCENARIOS = (
                           return_rank_min=0.90, return_min=0.075, return_max=None,
                           turnover_shock_min=None, close_strength_min=None,
                           max_previous_positive_days=None, score="return"),
+)
+
+
+# These were generated after inspecting the attention study.  They are kept in
+# a separate family so the rejected attention rule is not quietly redefined as
+# a success.  Any positive historical result is exploratory until a later,
+# untouched prospective sample has accumulated.
+MODERATE_MOMENTUM_SCENARIOS = (
+    AttentionScenario(
+        "moderate_4_7_normal_turnover_10m",
+        "Post-hoc exploratory: 4-7% daily return, 0.5-1.0x turnover, TRY 10m liquidity",
+        None, return_rank_min=None, return_min=.04, return_max=.07,
+        turnover_shock_min=.5, turnover_shock_max=1.0,
+        prior_median_turnover_min=10_000_000, close_strength_min=.60,
+        max_previous_positive_days=1, score="return"),
+    AttentionScenario(
+        "moderate_7_9_normal_turnover_10m",
+        "Post-hoc exploratory: 7-9% daily return, 0.5-1.0x turnover, TRY 10m liquidity",
+        None, return_rank_min=None, return_min=.07, return_max=.09,
+        turnover_shock_min=.5, turnover_shock_max=1.0,
+        prior_median_turnover_min=10_000_000, close_strength_min=.60,
+        max_previous_positive_days=1, score="return"),
 )
 
 
@@ -220,13 +244,19 @@ def _load_signals(conn: sqlite3.Connection, min_history: int,
 
 
 def _select(prices: pd.DataFrame, scenario: AttentionScenario) -> pd.DataFrame:
-    mask = prices["eligible"] & (prices["return_rank"] >= scenario.return_rank_min)
+    mask = prices["eligible"].copy()
+    if scenario.return_rank_min is not None:
+        mask &= prices["return_rank"] >= scenario.return_rank_min
     if scenario.return_min is not None:
         mask &= prices["daily_return"] >= scenario.return_min
     if scenario.return_max is not None:
         mask &= prices["daily_return"] <= scenario.return_max
     if scenario.turnover_shock_min is not None:
         mask &= prices["turnover_shock"] >= scenario.turnover_shock_min
+    if scenario.turnover_shock_max is not None:
+        mask &= prices["turnover_shock"] <= scenario.turnover_shock_max
+    if scenario.prior_median_turnover_min is not None:
+        mask &= prices["prior_median_turnover"] >= scenario.prior_median_turnover_min
     if scenario.close_strength_min is not None:
         mask &= prices["close_strength"] >= scenario.close_strength_min
     if scenario.max_previous_positive_days is not None:
@@ -234,7 +264,8 @@ def _select(prices: pd.DataFrame, scenario: AttentionScenario) -> pd.DataFrame:
     selected = prices.loc[mask].copy()
     key = "attention_score" if scenario.score == "attention" else "return_rank"
     selected = selected.sort_values(["date", key, "ticker"], ascending=[True, False, True])
-    selected = selected.groupby("date", group_keys=False).head(scenario.top_n).copy()
+    if scenario.top_n is not None:
+        selected = selected.groupby("date", group_keys=False).head(scenario.top_n).copy()
     selected["scenario"] = scenario.name
     return selected
 
@@ -361,9 +392,10 @@ def _daily_bucket_summary(events: pd.DataFrame, bucket: str,
          "mean_return", "median_return", "win_rate"]]
 
 
-def _gap_conditioning(events: pd.DataFrame) -> pd.DataFrame:
+def _gap_conditioning(events: pd.DataFrame,
+                      primary_scenario: str = "attention_top10") -> pd.DataFrame:
     """Ex-post opening-gap diagnostic; it cannot be a pre-open entry rule."""
-    frame = events[events["scenario"] == "attention_top10"].copy()
+    frame = events[events["scenario"] == primary_scenario].copy()
     if frame.empty:
         return pd.DataFrame()
     frame["opening_gap_bucket"] = pd.cut(
@@ -377,9 +409,10 @@ def _gap_conditioning(events: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
-def _freshness_splits(events: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+def _freshness_splits(events: pd.DataFrame,
+                      primary_scenario: str = "attention_top10") -> tuple[pd.DataFrame, pd.DataFrame]:
     """Pre-signal trend diagnostics for the primary attention selection."""
-    frame = events[events["scenario"] == "attention_top10"].copy()
+    frame = events[events["scenario"] == primary_scenario].copy()
     if frame.empty:
         return pd.DataFrame(), pd.DataFrame()
     frame["positive_streak_bucket"] = pd.cut(
@@ -425,6 +458,41 @@ def _component_sorts(prices: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 
 
+def _robustness_diagnostics(events: pd.DataFrame,
+                            scenarios: tuple[AttentionScenario, ...],
+                            split: str) -> pd.DataFrame:
+    """Tail and cost-threshold checks on equal-weight daily portfolios."""
+    rows: list[dict] = []
+    for scenario in scenarios:
+        daily = events[events["scenario"] == scenario.name].groupby("date")[
+            "open_to_close_1"].mean().dropna()
+        for sample, values in (
+            ("historical development", daily),
+            ("before configured split", daily[daily.index < pd.Timestamp(split)]),
+            ("after configured split", daily[daily.index >= pd.Timestamp(split)]),
+        ):
+            n = len(values)
+            if not n:
+                continue
+            low, high = values.quantile([.05, .95])
+            trimmed = values[(values >= low) & (values <= high)]
+            row: dict[str, object] = {
+                "scenario": scenario.name, "sample": sample, "portfolios": n,
+                "mean_return": float(values.mean()), "median_return": float(values.median()),
+                "winsorized_5pct_mean": float(values.clip(low, high).mean()),
+                "trimmed_5pct_mean": float(trimmed.mean()),
+                "win_rate": float((values > 0).mean()),
+                "above_25bps_rate": float((values > .0025).mean()),
+                "above_50bps_rate": float((values > .005).mean()),
+            }
+            for pct in (1, 5, 10):
+                k = max(1, math.ceil(n * pct / 100))
+                row[f"best_{pct}pct_contribution_to_mean"] = float(values.nlargest(k).sum() / n)
+                row[f"mean_ex_best_{pct}pct"] = float(values.drop(values.nlargest(k).index).mean())
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
 def run_attention_momentum_study(
         conn: sqlite3.Connection, *, start: str | None = None, end: str | None = None,
         min_history: int = 60, min_turnover: float = 1_000_000,
@@ -445,13 +513,14 @@ def run_attention_momentum_study(
                            & (summary["round_trip_cost_bps"] == 0)
                            & (summary["outcome"].str.startswith("open_to_close_"))].copy()
     metadata = {
+        "study_id": "attention-momentum", "study_title": "Daily attention--momentum study",
         "research_status": "exploratory", "source": "Yahoo daily BIST OHLCV",
         "start": str(prices["date"].min().date()), "end": str(prices["date"].max().date()),
         "rows": int(len(prices)), "tickers": int(prices["ticker"].nunique()),
         "min_history_sessions": min_history, "minimum_prior_median_turnover_try": min_turnover,
         "holdout_split": split, "horizons": list(horizons), "costs_bps": list(costs_bps),
         "scenarios": [asdict(s) for s in scenarios],
-         "primary_outcome": "open_to_close_1", "known_limits": [
+        "primary_scenarios": ["attention_top10"], "primary_outcome": "open_to_close_1", "known_limits": [
             "Daily bars cannot test intraday exits, auction fill probability, or bid-ask spreads.",
             "Yahoo OHLCV can contain BIST gaps or adjusted-price anomalies.",
             "The historical ticker universe lacks delisted securities and therefore has survivorship bias.",
@@ -468,7 +537,47 @@ def run_attention_momentum_study(
             "freshness_profiles": freshness_profiles,
             "component_sorts": _component_sorts(prices),
             "long_horizon_stability": long_horizon,
+            "robustness": _robustness_diagnostics(events, scenarios, split),
             "metadata": metadata}
+
+
+def run_moderate_momentum_study(
+        conn: sqlite3.Connection, *, start: str | None = None, end: str | None = None,
+        min_history: int = 60, min_turnover: float = 1_000_000,
+        split: str = "2026-01-01") -> dict[str, object]:
+    """Run the locked post-hoc moderate-momentum research family.
+
+    This is explicitly exploratory because its rule was motivated by results
+    already observed in the historical database.  Its prospective holdout
+    begins after this specification is committed, not at the configured split.
+    """
+    result = run_attention_momentum_study(
+        conn, start=start, end=end, min_history=min_history,
+        min_turnover=min_turnover, split=split,
+        scenarios=MODERATE_MOMENTUM_SCENARIOS)
+    metadata = result["metadata"]
+    assert isinstance(metadata, dict)
+    primary = tuple(s.name for s in MODERATE_MOMENTUM_SCENARIOS)
+    metadata.update({
+        "study_id": "moderate-momentum",
+        "study_title": "Moderate momentum without attention crowding",
+        "research_status": "exploratory post-hoc; prospective holdout required",
+        "primary_scenarios": list(primary),
+        "prospective_holdout": "Sessions after this specification is merged; no historical segment is independent validation.",
+    })
+    events = result["events"]
+    assert isinstance(events, pd.DataFrame)
+    # Gap/freshness remain useful diagnostics, shown for the 4-7% leg only.
+    result["gap_conditioning"] = _gap_conditioning(events, primary[0])
+    result["freshness_splits"], result["freshness_profiles"] = _freshness_splits(events, primary[0])
+    result["robustness"] = _robustness_diagnostics(events, MODERATE_MOMENTUM_SCENARIOS, split)
+    summary = result["summary"]
+    assert isinstance(summary, pd.DataFrame)
+    result["long_horizon_stability"] = summary[
+        summary["scenario"].isin(primary)
+        & (summary["round_trip_cost_bps"] == 0)
+        & (summary["outcome"].str.startswith("open_to_close_"))].copy()
+    return result
 
 
 def write_attention_outputs(result: dict[str, object], directory: str | Path) -> Path:
@@ -483,25 +592,31 @@ def write_attention_outputs(result: dict[str, object], directory: str | Path) ->
     freshness_profiles = result["freshness_profiles"]
     components = result["component_sorts"]
     long_horizon = result["long_horizon_stability"]
+    robustness = result["robustness"]
     metadata = result["metadata"]
     assert isinstance(summary, pd.DataFrame) and isinstance(events, pd.DataFrame)
     assert isinstance(matrix, pd.DataFrame) and isinstance(metadata, dict)
-    summary.to_csv(out / "attention_momentum_summary.csv", index=False)
-    events.to_csv(out / "attention_momentum_events.csv", index=False)
-    matrix.to_csv(out / "attention_momentum_matrix.csv", index=False)
+    stem = str(metadata.get("study_id", "attention-momentum")).replace("-", "_")
+    summary.to_csv(out / f"{stem}_summary.csv", index=False)
+    events.to_csv(out / f"{stem}_events.csv", index=False)
+    matrix.to_csv(out / f"{stem}_matrix.csv", index=False)
     for name, frame in {
-        "attention_momentum_gap_conditioning.csv": gap,
-        "attention_momentum_freshness_splits.csv": freshness_splits,
-        "attention_momentum_freshness_profiles.csv": freshness_profiles,
-        "attention_momentum_component_sorts.csv": components,
-        "attention_momentum_long_horizon_stability.csv": long_horizon,
+        f"{stem}_gap_conditioning.csv": gap,
+        f"{stem}_freshness_splits.csv": freshness_splits,
+        f"{stem}_freshness_profiles.csv": freshness_profiles,
+        f"{stem}_component_sorts.csv": components,
+        f"{stem}_long_horizon_stability.csv": long_horizon,
+        f"{stem}_robustness.csv": robustness,
     }.items():
         assert isinstance(frame, pd.DataFrame)
         frame.to_csv(out / name, index=False)
-    primary = summary[(summary["outcome"] == "open_to_close_1")
+    primary_names = list(metadata.get("primary_scenarios", ["attention_top10"]))
+    primary = summary[(summary["scenario"].isin(primary_names))
+                      & (summary["outcome"] == "open_to_close_1")
                       & (summary["round_trip_cost_bps"] == 50)
                       & (summary["sample"] == "validation")]
-    lines = ["# Daily attention--momentum study", "", "Status: **exploratory**.", "",
+    title = str(metadata.get("study_title", "Daily attention--momentum study"))
+    lines = [f"# {title}", "", f"Status: **{metadata.get('research_status', 'exploratory')}**.", "",
              "## Run metadata", ""]
     lines += [f"- **{key}**: {value}" for key, value in metadata.items() if key != "scenarios"]
     lines += ["", "## Primary executable outcome", "",
@@ -512,11 +627,11 @@ def write_attention_outputs(result: dict[str, object], directory: str | Path) ->
                "Opening-gap results are ex-post diagnostics: the gap is known at the next open, so it cannot "
                "justify an entry at that same open. Freshness and component files are descriptive splits, not "
                "new validated strategies.", "",
-               "- `attention_momentum_gap_conditioning.csv`",
-               "- `attention_momentum_freshness_splits.csv` and `attention_momentum_freshness_profiles.csv`",
-               "- `attention_momentum_component_sorts.csv`",
-               "- `attention_momentum_long_horizon_stability.csv`",
-               "", "See `attention_momentum_summary.csv` for every pre-specified scenario, cost and horizon."]
-    path = out / "attention_momentum_report.md"
+               f"- `{stem}_gap_conditioning.csv`",
+               f"- `{stem}_freshness_splits.csv` and `{stem}_freshness_profiles.csv`",
+               f"- `{stem}_component_sorts.csv`",
+               f"- `{stem}_long_horizon_stability.csv` and `{stem}_robustness.csv`",
+               "", f"See `{stem}_summary.csv` for every pre-specified scenario, cost and horizon."]
+    path = out / f"{stem}_report.md"
     path.write_text("\n".join(lines), encoding="utf-8")
     return path

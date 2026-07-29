@@ -427,18 +427,24 @@ def cmd_memo(args) -> None:
 def cmd_research(args) -> None:
     conn = db.connect()
     pd.set_option("display.width", 220)
-    if args.study == "attention":
-        result = attention.run_attention_momentum_study(
-            conn, start=args.start.isoformat() if args.start else None,
-            end=args.end.isoformat() if args.end else None,
-            min_turnover=args.min_turnover * 1_000_000,
-            split=args.split,
-        )
+    if args.study in {"attention", "moderate-momentum"}:
+        common = {"start": args.start.isoformat() if args.start else None,
+                  "end": args.end.isoformat() if args.end else None,
+                  "min_turnover": args.min_turnover * 1_000_000,
+                  "split": args.split}
+        result = (attention.run_moderate_momentum_study(conn, **common)
+                  if args.study == "moderate-momentum"
+                  else attention.run_attention_momentum_study(conn, **common))
         summary = result["summary"]
         assert isinstance(summary, pd.DataFrame)
-        primary = summary[(summary["outcome"] == "open_to_close_1")
+        metadata = result["metadata"]
+        assert isinstance(metadata, dict)
+        primary_names = list(metadata.get("primary_scenarios", ["attention_top10"]))
+        primary = summary[(summary["scenario"].isin(primary_names))
+                          & (summary["outcome"] == "open_to_close_1")
                           & (summary["round_trip_cost_bps"] == 50)]
-        print("Daily BIST attention--momentum study (exploratory).\n"
+        print(f"{metadata.get('study_title', 'Daily BIST attention--momentum study')} "
+              f"({metadata.get('research_status', 'exploratory')}).\n"
               "Signal at close t; executable primary return is next open to close.\n")
         print(primary.round(4).to_string(index=False))
         if args.save:
@@ -709,7 +715,7 @@ def main() -> None:
     p.set_defaults(func=cmd_memo)
 
     p = sub.add_parser("research", help="run a research study")
-    p.add_argument("study", choices=["attention", "flows", "flows-by-category",
+    p.add_argument("study", choices=["attention", "moderate-momentum", "flows", "flows-by-category",
                                      "flows-oos", "chasing", "closet",
                                      "diagnostics", "gate", "catret",
                                      "mandate", "panel", "rigor"])
