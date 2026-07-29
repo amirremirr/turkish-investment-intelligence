@@ -100,6 +100,9 @@ export default async function MarketPage() {
             This is risk context for avoiding a chase—not a forecast, recommendation,
             or evidence that a short trade is executable.
           </p>
+          <Link href="/signals" className="mb-3 inline-block text-sm font-medium text-accent hover:underline">
+            See the Signal Lab methodology and collection status
+          </Link>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead><tr className="border-b text-left text-muted">

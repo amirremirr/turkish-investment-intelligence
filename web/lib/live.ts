@@ -23,6 +23,7 @@ export type ExhaustionCandidate = {
   turnover_shock: number;
 };
 export type ExhaustionWatch = {
+  state?: string;
   status?: string;
   source_note?: string;
   candidates?: ExhaustionCandidate[];

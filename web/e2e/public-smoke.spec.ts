@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-const routes = ["/", "/funds", "/market", "/research", "/status", "/stocks"];
+const routes = ["/", "/funds", "/market", "/signals", "/research", "/status", "/stocks"];
 
 for (const route of routes) {
   test(`public route ${route} renders without a server error`, async ({ page }) => {
@@ -19,6 +19,7 @@ test("mobile navigation exposes the primary routes", async ({ page }) => {
   const nav = page.getByRole("navigation", { name: "Mobile navigation" });
   await expect(nav).toBeVisible();
   await expect(nav.getByRole("link", { name: "Funds" })).toBeVisible();
+  await expect(nav.getByRole("link", { name: "Signal Lab" })).toBeVisible();
   await expect(nav.getByRole("link", { name: "Data status" })).toBeVisible();
 });
 

@@ -583,6 +583,45 @@ export async function getStatus(): Promise<StatusMap> {
   return out;
 }
 
+export type SignalLabStatus = {
+  observations: number;
+  eventDays: number;
+  firstSignalDate: string | null;
+  lastSignalDate: string | null;
+  intradayBars: number;
+  signalsWithBars: number;
+  firstBarAt: string | null;
+  lastBarAt: string | null;
+};
+
+// Signal tables are created by the intraday collector, rather than during the
+// normal database publish. Callers must still degrade safely before its first
+// successful run, so this query deliberately has no hidden fallback state.
+export async function getSignalLabStatus(): Promise<SignalLabStatus> {
+  const [observations, bars] = await Promise.all([
+    sql`SELECT COUNT(*) AS observations,
+               COUNT(DISTINCT signal_date) AS event_days,
+               MIN(signal_date) AS first_signal_date,
+               MAX(signal_date) AS last_signal_date
+        FROM signal_observations`,
+    sql`SELECT COUNT(*) AS intraday_bars,
+               COUNT(DISTINCT signal_id) AS signals_with_bars,
+               MIN(bar_timestamp) AS first_bar_at,
+               MAX(bar_timestamp) AS last_bar_at
+        FROM signal_intraday_bars`,
+  ]);
+  return {
+    observations: Number(observations[0].observations),
+    eventDays: Number(observations[0].event_days),
+    firstSignalDate: (observations[0].first_signal_date as string | null) ?? null,
+    lastSignalDate: (observations[0].last_signal_date as string | null) ?? null,
+    intradayBars: Number(bars[0].intraday_bars),
+    signalsWithBars: Number(bars[0].signals_with_bars),
+    firstBarAt: (bars[0].first_bar_at as string | null) ?? null,
+    lastBarAt: (bars[0].last_bar_at as string | null) ?? null,
+  };
+}
+
 export async function getCategoryFlows(): Promise<
   { category: string; net_flow_bn: number }[]
 > {
