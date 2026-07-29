@@ -628,6 +628,31 @@ def test_mkk_monthly_empty_page_does_not_mark_period_exhausted(tmp_conn):
     ).fetchone()[0] == 0
 
 
+def test_mkk_monthly_transient_page_is_deferred_and_recovery_continues(tmp_conn):
+    from tefaslab import kap, mkk
+
+    class Client:
+        def last_disclosure_index(self):
+            return 250
+
+        def disclosures(self, start):
+            if start == 151:
+                raise mkk.MKKTransientError("MKK transient HTTP 500 after retries")
+            return [{"disclosureIndex": did, "fundCode": "AAA", "fundId": "1",
+                     "title": "Alpha", "subReportIds": [], "acceptedDataFileTypes": []}
+                    for did in range(start, start + 50)]
+
+    tmp_conn.executescript(kap.SCHEMA)
+    tmp_conn.execute("INSERT INTO funds VALUES ('AAA', 'Alpha', 'YAT', 'Equity Turkey')")
+    out = kap.discover_mkk_monthly(tmp_conn, "2026-06", batches=3,
+                                    detail_limit=0, client=Client())
+    assert out["deferred_pages"] == 1 and out["cursor"] == 51
+    row = tmp_conn.execute(
+        "SELECT direction, cursor FROM mkk_deferred_pages WHERE period='2026-06'"
+    ).fetchone()
+    assert row == ("backward", 151)
+
+
 def test_mkk_classifier_handles_turkish_dotless_i():
     from tefaslab import kap
 

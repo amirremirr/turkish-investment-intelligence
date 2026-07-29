@@ -29,10 +29,15 @@ MIN_REQUEST_INTERVAL_SECONDS = 10.5
 # discard a month's scan checkpoint.  Retry a small, bounded number of times
 # and honour a server-provided delay when available.
 MAX_RATE_LIMIT_RETRIES = 4
+RETRYABLE_SERVER_STATUSES = {500, 502, 503, 504}
 
 
 class MKKConfigurationError(RuntimeError):
     """Raised before any network call when the MKK credentials are absent."""
+
+
+class MKKTransientError(requests.HTTPError):
+    """A bounded retryable upstream failure; callers may defer one page."""
 
 
 class MKKClient:
@@ -82,14 +87,23 @@ class MKKClient:
                 timeout=timeout,
             )
             self._last_request_at = self.clock()
-            if response.status_code != 429 or attempt == MAX_RATE_LIMIT_RETRIES:
+            retryable = response.status_code == 429 or response.status_code in RETRYABLE_SERVER_STATUSES
+            if not retryable:
                 response.raise_for_status()
                 return response.content if binary else response.json()
+
+            if attempt == MAX_RATE_LIMIT_RETRIES:
+                raise MKKTransientError(
+                    f"MKK transient HTTP {response.status_code} after {attempt + 1} attempts",
+                    response=response,
+                )
 
             # Start the next attempt after the provider's cooldown. Clearing
             # the per-client timestamp avoids assuming an injected test clock
             # advanced while the injected sleeper ran.
-            self.sleep(self._retry_after_seconds(response))
+            delay = (self._retry_after_seconds(response) if response.status_code == 429
+                     else min(60.0, self.min_interval * (2 ** attempt)))
+            self.sleep(delay)
             self._last_request_at = None
 
         raise AssertionError("unreachable")

@@ -182,6 +182,15 @@ CREATE TABLE IF NOT EXISTS mkk_monthly_scan_state (
     exhausted   INTEGER NOT NULL DEFAULT 0,
     updated_at  TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS mkk_deferred_pages (
+    period      TEXT NOT NULL,
+    direction   TEXT NOT NULL,
+    cursor      INTEGER NOT NULL,
+    last_error  TEXT NOT NULL,
+    deferred_at TEXT NOT NULL,
+    attempts    INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (period, direction, cursor)
+);
 """
 
 MAX_RETRY_ATTEMPTS = 3
@@ -780,6 +789,19 @@ def _set_mkk_monthly_cursor(conn: sqlite3.Connection, period: str, cursor: int,
     conn.commit()
 
 
+def _defer_mkk_page(conn: sqlite3.Connection, period: str, direction: str,
+                    cursor: int, error: Exception) -> None:
+    """Persist one unavailable upstream page and leave the recovery moving."""
+    conn.execute(
+        "INSERT INTO mkk_deferred_pages(period, direction, cursor, last_error, deferred_at) "
+        "VALUES (?,?,?,?,?) ON CONFLICT(period, direction, cursor) DO UPDATE SET "
+        "last_error=excluded.last_error, deferred_at=excluded.deferred_at, "
+        "attempts=mkk_deferred_pages.attempts + 1",
+        (period, direction, cursor, str(error)[:500], datetime_now_iso()),
+    )
+    conn.commit()
+
+
 def reset_mkk_monthly_scan(conn: sqlite3.Connection, period: str) -> None:
     """Reset one reviewed period's MKK checkpoint and classifier queue.
 
@@ -833,7 +855,7 @@ def discover_mkk_monthly(conn: sqlite3.Connection, period: str, batches: int = 5
         live_cursor = latest + 1
         exhausted = False
 
-    listed = empty_pages = short_pages = 0
+    listed = empty_pages = short_pages = deferred_pages = 0
     pages_left = batches
 
     def store_batch(batch: list[dict]) -> list[int]:
@@ -867,7 +889,14 @@ def discover_mkk_monthly(conn: sqlite3.Connection, period: str, batches: int = 5
     # lane, a backward cursor would correctly recover the old filing wave but
     # miss corrections/new reports that arrive later in days 1–15.
     while pages_left and live_cursor <= latest:
-        batch = client.disclosures(live_cursor)
+        try:
+            batch = client.disclosures(live_cursor)
+        except mkk.MKKTransientError as exc:
+            _defer_mkk_page(conn, period, "forward", live_cursor, exc)
+            live_cursor = min(latest + 1, live_cursor + MKK_BATCH_SIZE)
+            deferred_pages += 1
+            pages_left -= 1
+            continue
         if not batch:
             # An empty response can be a transient gateway/rate-limit edge,
             # not evidence that every newer notice was scanned. Leave the
@@ -887,7 +916,13 @@ def discover_mkk_monthly(conn: sqlite3.Connection, period: str, batches: int = 5
         if exhausted or cursor < 1:
             exhausted = True
             break
-        batch = client.disclosures(cursor)
+        try:
+            batch = client.disclosures(cursor)
+        except mkk.MKKTransientError as exc:
+            _defer_mkk_page(conn, period, "backward", cursor, exc)
+            cursor = max(1, cursor - MKK_BATCH_SIZE)
+            deferred_pages += 1
+            continue
         if not batch:
             # Do not poison the durable cursor on an empty page. The previous
             # implementation marked the whole period exhausted here.
@@ -953,7 +988,8 @@ def discover_mkk_monthly(conn: sqlite3.Connection, period: str, batches: int = 5
             "exhausted": exhausted, "listed": listed,
             "inspected": inspected, "portfolio_reports": found,
             "deferred": deferred, "ignored": ignored, "errors": errors,
-            "empty_pages": empty_pages, "short_pages": short_pages}
+            "empty_pages": empty_pages, "short_pages": short_pages,
+            "deferred_pages": deferred_pages}
 
 
 # ------------------------------------------------------ monthly coverage
