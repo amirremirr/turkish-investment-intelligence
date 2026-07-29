@@ -72,7 +72,7 @@ def test_attention_study_uses_next_session_open_without_lookahead(tmp_path):
             rows.append((ticker, dt.strftime("%Y-%m-%d"), opening, high, low, close, volume))
     conn.executemany("INSERT INTO stock_prices VALUES (?,?,?,?,?,?,?)", rows)
     scenario = attention.AttentionScenario(
-        "test", "synthetic", 1, return_rank_min=.5, return_min=.02,
+        "attention_top10", "synthetic", 1, return_rank_min=.5, return_min=.02,
         return_max=.09, turnover_shock_min=2, close_strength_min=.75,
         max_previous_positive_days=None)
     result = attention.run_attention_momentum_study(
@@ -91,6 +91,9 @@ def test_attention_study_uses_next_session_open_without_lookahead(tmp_path):
     assert (tmp_path / "attention_momentum_gap_conditioning.csv").exists()
     assert (tmp_path / "attention_momentum_freshness_splits.csv").exists()
     assert (tmp_path / "attention_momentum_component_sorts.csv").exists()
+    freshness = result["freshness_splits"]
+    assert (freshness["events"] > 0).all()
+    assert (freshness["portfolios"] <= freshness["events"]).all()
 
 
 # --------------------------------------------------------- classifier

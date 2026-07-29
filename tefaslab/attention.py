@@ -343,16 +343,19 @@ def _daily_bucket_summary(events: pd.DataFrame, bucket: str,
         return pd.DataFrame(columns=[bucket, "portfolios", "events",
                                      "mean_names_per_portfolio", "mean_return",
                                      "median_return", "win_rate"])
-    daily = frame.groupby(["date", bucket], observed=False).agg(
+    # ``observed=True`` is essential for categoricals: otherwise pandas emits
+    # an empty date × bucket row for every absent category and corrupts counts
+    # and win rates by treating those missing portfolios as losing days.
+    daily = frame.groupby(["date", bucket], observed=True).agg(
         portfolio_return=(outcome, "mean"), names=("ticker", "size"))
-    result = daily.groupby(level=1, observed=False).agg(
+    result = daily.groupby(level=1, observed=True).agg(
         portfolios=("portfolio_return", "size"),
         mean_names_per_portfolio=("names", "mean"),
         mean_return=("portfolio_return", "mean"),
         median_return=("portfolio_return", "median"),
         win_rate=("portfolio_return", lambda s: (s > 0).mean()),
     ).reset_index()
-    counts = frame.groupby(bucket, observed=False).size().rename("events").reset_index()
+    counts = frame.groupby(bucket, observed=True).size().rename("events").reset_index()
     return result.merge(counts, on=bucket, how="left")[
         [bucket, "portfolios", "events", "mean_names_per_portfolio",
          "mean_return", "median_return", "win_rate"]]
