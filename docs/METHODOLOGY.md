@@ -222,6 +222,7 @@ accumulate.
 | Performance chasing | `retired` | Aggregate result does not survive the fund-level panel. |
 | Individual alpha / manager skill | `inconclusive` | No individual citable result after multiple-testing control. |
 | Regime winners | `descriptive` | Small-sample historical summary, not a forecast. |
+| Daily stock attention--momentum | `exploratory` | Historical daily-OHLCV test; no trade or fill claim. |
 
 ## 12. Required upgrades before stronger claims
 

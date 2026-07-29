@@ -11,12 +11,13 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from tefaslab import classify, db, evds, flows, metrics, research  # noqa: E402
+from tefaslab import attention, classify, db, evds, flows, metrics, research  # noqa: E402
 from tefaslab.kap import parse_pdf_holdings  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -38,6 +39,52 @@ def test_ols_recovers_known_beta():
 def test_ols_too_few_observations():
     res = research._ols(np.ones(10), np.ones(10))
     assert np.isnan(res["beta"])
+
+
+def test_attention_study_uses_next_session_open_without_lookahead(tmp_path):
+    import sqlite3
+
+    conn = sqlite3.connect(":memory:")
+    conn.executescript("""
+        CREATE TABLE stocks(ticker TEXT PRIMARY KEY, sector TEXT);
+        CREATE TABLE stock_prices(
+            ticker TEXT, date TEXT, open REAL, high REAL, low REAL, close REAL,
+            volume REAL, PRIMARY KEY(ticker, date));
+    """)
+    conn.executemany("INSERT INTO stocks VALUES (?, ?)",
+                     [("AAA", "Industry"), ("BBB", "Banks"), ("CCC", "Banks")])
+    dates = pd.bdate_range("2025-01-01", periods=70)
+    rows = []
+    for ticker in ("AAA", "BBB", "CCC"):
+        close = 100.0
+        for i, dt in enumerate(dates):
+            opening = close
+            high = close * 1.01
+            low = close * .99
+            volume = 1_000.0
+            if ticker == "AAA" and i == 62:
+                close = opening * 1.03
+                high, low, volume = close, opening, 5_000.0
+            elif ticker == "AAA" and i == 63:
+                opening = close * 1.001
+                close = opening * 1.01
+                high, low = close, opening
+            rows.append((ticker, dt.strftime("%Y-%m-%d"), opening, high, low, close, volume))
+    conn.executemany("INSERT INTO stock_prices VALUES (?,?,?,?,?,?,?)", rows)
+    scenario = attention.AttentionScenario(
+        "test", "synthetic", 1, return_rank_min=.5, return_min=.02,
+        return_max=.09, turnover_shock_min=2, close_strength_min=.75,
+        max_previous_positive_days=None)
+    result = attention.run_attention_momentum_study(
+        conn, min_history=60, min_turnover=1, scenarios=(scenario,),
+        costs_bps=(0,), horizons=(1,))
+    events = result["events"]
+    assert not events.empty
+    event = events[(events["ticker"] == "AAA") & (events["date"] == dates[62])].iloc[0]
+    assert event["entry_date"] == dates[63]
+    assert event["open_to_close_1"] == pytest.approx(.01)
+    path = attention.write_attention_outputs(result, tmp_path)
+    assert path.exists() and (tmp_path / "attention_momentum_summary.csv").exists()
 
 
 # --------------------------------------------------------- classifier
