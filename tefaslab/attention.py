@@ -183,6 +183,12 @@ def _load_signals(conn: sqlite3.Connection, min_history: int,
     prices["history_days"] = grouped.cumcount()
     prices["previous_positive_days"] = grouped["daily_return"].transform(
         _previous_positive_streak)
+    # These are deliberately measured *before* the signal day.  Including
+    # today's jump here would make "fresh" versus "exhausted" tautological.
+    prices["pre_signal_5d_return"] = (
+        grouped["close"].shift(1) / grouped["close"].shift(6) - 1)
+    prices["pre_signal_20d_return"] = (
+        grouped["close"].shift(1) / grouped["close"].shift(21) - 1)
     prices["turnover_shock"] = prices["turnover"] / prices["prior_median_turnover"]
     prices["close_strength"] = np.where(
         prices["high"] > prices["low"],
@@ -204,7 +210,6 @@ def _load_signals(conn: sqlite3.Connection, min_history: int,
         0.35 * prices["return_rank"] + 0.30 * prices["turnover_rank"]
         + 0.20 * prices["close_strength_rank"] + 0.15 * prices["relative_return_rank"])
     market = prices.loc[prices["eligible"]].groupby("date").agg(
-        market_intraday=("close", "size"),
         eligible_stocks=("ticker", "nunique"),
     )
     # The intraday market benchmark needs an open-to-close return, calculated
@@ -291,7 +296,17 @@ def _portfolio_rows(events: pd.DataFrame, market: pd.DataFrame,
                                  **result})
     summary = pd.DataFrame(rows)
     if not summary.empty:
-        summary["fdr_q_value"] = _benjamini_hochberg(summary["one_sided_p"])
+        # Cost rows are deterministic transformations of a gross return, not
+        # separate stochastic tests.  Applying FDR to them would manufacture
+        # apparent significance solely by subtracting a fixed cost.
+        summary["fdr_q_value"] = np.nan
+        gross = summary["round_trip_cost_bps"] == 0
+        summary.loc[gross, "fdr_q_value"] = _benjamini_hochberg(
+            summary.loc[gross, "one_sided_p"])
+        summary["fdr_family"] = np.where(
+            gross, "gross scenario/outcome/sample family",
+            "not applicable: deterministic cost sensitivity",
+        )
         summary["research_status"] = "exploratory"
     return summary, pd.concat(daily_rows, ignore_index=True) if daily_rows else pd.DataFrame()
 
@@ -320,6 +335,93 @@ def _attention_matrix(prices: pd.DataFrame) -> pd.DataFrame:
     ).reset_index()
 
 
+def _daily_bucket_summary(events: pd.DataFrame, bucket: str,
+                          outcome: str = "open_to_close_1") -> pd.DataFrame:
+    """Describe an event split without treating same-day shares as independent."""
+    frame = events.dropna(subset=[bucket, outcome]).copy()
+    if frame.empty:
+        return pd.DataFrame(columns=[bucket, "portfolios", "events",
+                                     "mean_names_per_portfolio", "mean_return",
+                                     "median_return", "win_rate"])
+    daily = frame.groupby(["date", bucket], observed=False).agg(
+        portfolio_return=(outcome, "mean"), names=("ticker", "size"))
+    result = daily.groupby(level=1, observed=False).agg(
+        portfolios=("portfolio_return", "size"),
+        mean_names_per_portfolio=("names", "mean"),
+        mean_return=("portfolio_return", "mean"),
+        median_return=("portfolio_return", "median"),
+        win_rate=("portfolio_return", lambda s: (s > 0).mean()),
+    ).reset_index()
+    counts = frame.groupby(bucket, observed=False).size().rename("events").reset_index()
+    return result.merge(counts, on=bucket, how="left")[
+        [bucket, "portfolios", "events", "mean_names_per_portfolio",
+         "mean_return", "median_return", "win_rate"]]
+
+
+def _gap_conditioning(events: pd.DataFrame) -> pd.DataFrame:
+    """Ex-post opening-gap diagnostic; it cannot be a pre-open entry rule."""
+    frame = events[events["scenario"] == "attention_top10"].copy()
+    if frame.empty:
+        return pd.DataFrame()
+    frame["opening_gap_bucket"] = pd.cut(
+        frame["overnight_return"],
+        [-np.inf, 0, .005, .01, .02, np.inf],
+        labels=["negative", "0% to +0.5%", "+0.5% to +1%", "+1% to +2%", "> +2%"],
+    )
+    result = _daily_bucket_summary(frame, "opening_gap_bucket")
+    result["timing_note"] = (
+        "Gap is known at t+1 open; descriptive for post-open timing only")
+    return result
+
+
+def _freshness_splits(events: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Pre-signal trend diagnostics for the primary attention selection."""
+    frame = events[events["scenario"] == "attention_top10"].copy()
+    if frame.empty:
+        return pd.DataFrame(), pd.DataFrame()
+    frame["positive_streak_bucket"] = pd.cut(
+        frame["previous_positive_days"], [-1, 0, 1, 3, np.inf],
+        labels=["0 prior up days", "1 prior up day", "2-3 prior up days", "4+ prior up days"])
+    frame["pre_signal_5d_bucket"] = pd.cut(
+        frame["pre_signal_5d_return"], [-np.inf, 0, .05, .15, np.inf],
+        labels=["<= 0%", "0-5%", "5-15%", "> 15%"])
+    frame["freshness_class"] = np.select(
+        [((frame["previous_positive_days"] <= 1) & (frame["pre_signal_5d_return"] <= .05)),
+         ((frame["previous_positive_days"] >= 2) | (frame["pre_signal_5d_return"] > .05))],
+        ["fresh", "exhausted"], default="intermediate")
+    streak = _daily_bucket_summary(frame, "positive_streak_bucket").rename(
+        columns={"positive_streak_bucket": "bucket"}).assign(split="prior positive streak")
+    trailing = _daily_bucket_summary(frame, "pre_signal_5d_bucket").rename(
+        columns={"pre_signal_5d_bucket": "bucket"}).assign(split="pre-signal 5d return")
+    splits = pd.concat([streak, trailing], ignore_index=True)
+    profiles = _daily_bucket_summary(frame, "freshness_class")
+    return splits, profiles
+
+
+def _component_sorts(prices: pd.DataFrame) -> pd.DataFrame:
+    """Descriptive quintile sorts for each non-fitted signal component."""
+    frame = prices[prices["eligible"]].copy()
+    frame = _attach_outcomes(frame, prices, (1,))
+    components = {
+        "same-day return": "daily_return",
+        "turnover shock": "turnover_shock",
+        "close strength": "close_strength",
+        "market-relative return": "relative_return",
+        "pre-signal 5d return": "pre_signal_5d_return",
+        "pre-signal 20d return": "pre_signal_20d_return",
+        "prior positive days": "previous_positive_days",
+    }
+    rows: list[pd.DataFrame] = []
+    for name, column in components.items():
+        rank = frame[column].groupby(frame["date"]).rank(pct=True, method="average")
+        bucket = pd.cut(rank, [0, .2, .4, .6, .8, 1],
+                        labels=["Q1 low", "Q2", "Q3", "Q4", "Q5 high"], include_lowest=True)
+        part = _daily_bucket_summary(frame.assign(component_bucket=bucket), "component_bucket")
+        part.insert(0, "component", name)
+        rows.append(part)
+    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
+
+
 def run_attention_momentum_study(
         conn: sqlite3.Connection, *, start: str | None = None, end: str | None = None,
         min_history: int = 60, min_turnover: float = 1_000_000,
@@ -335,6 +437,10 @@ def run_attention_momentum_study(
     selected = pd.concat([_select(prices, s) for s in scenarios], ignore_index=True)
     events = _attach_outcomes(selected, prices, horizons) if not selected.empty else selected
     summary, daily = _portfolio_rows(events, market, scenarios, horizons, costs_bps, split)
+    freshness_splits, freshness_profiles = _freshness_splits(events)
+    long_horizon = summary[(summary["scenario"] == "attention_top10")
+                           & (summary["round_trip_cost_bps"] == 0)
+                           & (summary["outcome"].str.startswith("open_to_close_"))].copy()
     metadata = {
         "research_status": "exploratory", "source": "Yahoo daily BIST OHLCV",
         "start": str(prices["date"].min().date()), "end": str(prices["date"].max().date()),
@@ -342,15 +448,24 @@ def run_attention_momentum_study(
         "min_history_sessions": min_history, "minimum_prior_median_turnover_try": min_turnover,
         "holdout_split": split, "horizons": list(horizons), "costs_bps": list(costs_bps),
         "scenarios": [asdict(s) for s in scenarios],
-        "primary_outcome": "open_to_close_1", "known_limits": [
+         "primary_outcome": "open_to_close_1", "known_limits": [
             "Daily bars cannot test intraday exits, auction fill probability, or bid-ask spreads.",
             "Yahoo OHLCV can contain BIST gaps or adjusted-price anomalies.",
             "The historical ticker universe lacks delisted securities and therefore has survivorship bias.",
-            "A limit-up close is not assumed executable; no order-book data is available.",
-        ],
+             "A limit-up close is not assumed executable; no order-book data is available.",
+             "Opening-gap conditioning is observed only at the next open and is not a pre-open rule.",
+             "Closing-auction, last-30-minute VWAP, and intraday-path tests require timestamped trade or bar data.",
+             "KAP catalyst tests require a dated, validated disclosure-to-ticker mapping.",
+         ],
     }
     return {"summary": summary, "daily": daily, "events": events,
-            "attention_matrix": _attention_matrix(prices), "metadata": metadata}
+            "attention_matrix": _attention_matrix(prices),
+            "gap_conditioning": _gap_conditioning(events),
+            "freshness_splits": freshness_splits,
+            "freshness_profiles": freshness_profiles,
+            "component_sorts": _component_sorts(prices),
+            "long_horizon_stability": long_horizon,
+            "metadata": metadata}
 
 
 def write_attention_outputs(result: dict[str, object], directory: str | Path) -> Path:
@@ -360,12 +475,26 @@ def write_attention_outputs(result: dict[str, object], directory: str | Path) ->
     summary = result["summary"]
     events = result["events"]
     matrix = result["attention_matrix"]
+    gap = result["gap_conditioning"]
+    freshness_splits = result["freshness_splits"]
+    freshness_profiles = result["freshness_profiles"]
+    components = result["component_sorts"]
+    long_horizon = result["long_horizon_stability"]
     metadata = result["metadata"]
     assert isinstance(summary, pd.DataFrame) and isinstance(events, pd.DataFrame)
     assert isinstance(matrix, pd.DataFrame) and isinstance(metadata, dict)
     summary.to_csv(out / "attention_momentum_summary.csv", index=False)
     events.to_csv(out / "attention_momentum_events.csv", index=False)
     matrix.to_csv(out / "attention_momentum_matrix.csv", index=False)
+    for name, frame in {
+        "attention_momentum_gap_conditioning.csv": gap,
+        "attention_momentum_freshness_splits.csv": freshness_splits,
+        "attention_momentum_freshness_profiles.csv": freshness_profiles,
+        "attention_momentum_component_sorts.csv": components,
+        "attention_momentum_long_horizon_stability.csv": long_horizon,
+    }.items():
+        assert isinstance(frame, pd.DataFrame)
+        frame.to_csv(out / name, index=False)
     primary = summary[(summary["outcome"] == "open_to_close_1")
                       & (summary["round_trip_cost_bps"] == 50)
                       & (summary["sample"] == "validation")]
@@ -375,8 +504,16 @@ def write_attention_outputs(result: dict[str, object], directory: str | Path) ->
     lines += ["", "## Primary executable outcome", "",
               "Signal at close *t*; buy at open *t+1*; sell at close *t+1*. "
               "Returns below include a 50 bps round-trip cost assumption.", "",
-              primary.to_markdown(index=False) if not primary.empty else "No executable observations.",
-              "", "See `attention_momentum_summary.csv` for every pre-specified scenario, cost and horizon."]
+               primary.to_markdown(index=False) if not primary.empty else "No executable observations.",
+               "", "## Daily-data follow-ups", "",
+               "Opening-gap results are ex-post diagnostics: the gap is known at the next open, so it cannot "
+               "justify an entry at that same open. Freshness and component files are descriptive splits, not "
+               "new validated strategies.", "",
+               "- `attention_momentum_gap_conditioning.csv`",
+               "- `attention_momentum_freshness_splits.csv` and `attention_momentum_freshness_profiles.csv`",
+               "- `attention_momentum_component_sorts.csv`",
+               "- `attention_momentum_long_horizon_stability.csv`",
+               "", "See `attention_momentum_summary.csv` for every pre-specified scenario, cost and horizon."]
     path = out / "attention_momentum_report.md"
     path.write_text("\n".join(lines), encoding="utf-8")
     return path

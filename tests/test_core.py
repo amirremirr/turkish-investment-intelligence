@@ -83,8 +83,14 @@ def test_attention_study_uses_next_session_open_without_lookahead(tmp_path):
     event = events[(events["ticker"] == "AAA") & (events["date"] == dates[62])].iloc[0]
     assert event["entry_date"] == dates[63]
     assert event["open_to_close_1"] == pytest.approx(.01)
+    assert event["pre_signal_5d_return"] == pytest.approx(0)
+    summary = result["summary"]
+    assert summary["fdr_family"].eq("gross scenario/outcome/sample family").all()
     path = attention.write_attention_outputs(result, tmp_path)
     assert path.exists() and (tmp_path / "attention_momentum_summary.csv").exists()
+    assert (tmp_path / "attention_momentum_gap_conditioning.csv").exists()
+    assert (tmp_path / "attention_momentum_freshness_splits.csv").exists()
+    assert (tmp_path / "attention_momentum_component_sorts.csv").exists()
 
 
 # --------------------------------------------------------- classifier

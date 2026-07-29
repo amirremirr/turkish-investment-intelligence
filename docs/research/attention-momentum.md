@@ -91,8 +91,10 @@ mean, skew, maximum drawdown, longest losing streak and positive-month rate.
 - Inference: Newey--West mean standard errors with lag at least the holding
   horizon, plus a deterministic moving-block bootstrap 95% interval.
 - Multiple testing: one-sided Newey--West p-values are adjusted using
-  Benjamini--Hochberg FDR across the complete reported scenario/outcome/cost/
-  sample family.
+  Benjamini--Hochberg FDR across the gross-return scenario/outcome/sample
+  family. Cost rows are deterministic sensitivity transformations of the same
+  gross return, so assigning them separate p-values would create spurious
+  significance merely by subtracting a fixed cost.
 - Split: by default, observations before 2026-01-01 are discovery and later
   observations are validation. Rules must not be changed after inspecting the
   validation portion; a later untouched holdout is required for a stronger
@@ -128,3 +130,41 @@ Optional `--start`, `--end`, `--split`, and `--min-turnover` arguments change
 the declared sample/configuration and therefore create a different research
 run. The command writes a Markdown summary, full scenario table, selected
 events and the attention matrix.
+
+## Follow-up diagnostics supported by the current data
+
+The study also reports descriptive—not separately validated—daily-bar splits:
+
+- **Opening-gap conditioning.** Primary selections are grouped by their next
+  session's close-to-open gap (negative, 0–0.5%, 0.5–1%, 1–2%, and over 2%) and
+  their subsequent open-to-close return. This helps identify gap exhaustion,
+  but the gap is known only at the open; it is not a pre-open entry rule.
+- **Fresh versus exhausted attention.** The primary selection is split by the
+  number of positive sessions before the signal and the return over the five
+  sessions ending before the signal. `fresh` means no more than one prior up
+  day and no more than 5% pre-signal five-session appreciation; `exhausted`
+  means at least two prior up days or more than 5% appreciation. The remaining
+  names are labelled intermediate.
+- **Component quintiles.** Same-day return, turnover shock, close strength,
+  relative return, prior five- and twenty-session returns, and prior positive
+  streak are each sorted cross-sectionally. These sorts reveal what the fixed
+  score is combining before any revised score is considered.
+- **Long-horizon stability.** Gross primary results for every open-to-close
+  horizon are retained separately for discovery, validation, and full samples.
+  The horizons overlap, so Newey--West and block-bootstrap diagnostics remain
+  essential and a favourable individual horizon is exploratory.
+
+## Explicitly deferred tests
+
+The current daily OHLCV data cannot answer whether a pre-close signal is
+executable in the closing auction, whether last-30-minute or last-15-minute
+VWAP predicts the next open, whether an opening reversal occurs in the first
+15/30/60 minutes, or whether a stock was locked at its limit with saleable
+liquidity. Those require timestamped intraday trades/bars and, ideally,
+auction/order-book fields.
+
+Similarly, a KAP-catalyst study must first build a versioned, dated mapping
+from disclosures and attachments to issuer tickers. It must not use a generic
+fund-notice scrape as a proxy for stock-specific news. Until those inputs are
+available, close-to-next-open is only a theoretical diagnostic—not evidence
+that “attention matters overnight.”
