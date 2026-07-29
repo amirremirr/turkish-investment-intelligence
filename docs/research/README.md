@@ -4,6 +4,11 @@ These notes are reproducible investigations, not a catalogue of trading
 signals. Each note links to its method, data scope and current claim status in
 [METHODOLOGY.md](../METHODOLOGY.md).
 
+If you do not need the technical detail first, read the
+[plain-English project guide](../START_HERE.md) and the
+[current research results](../RESULTS.md). They state which ideas are measured,
+exploratory, inconclusive or retired before linking back here.
+
 | # | Note | Status | Permitted reading |
 |---|---|---|---|
 | 1 | [Retail fund flows are mildly contrarian](01-contrarian-flows.md) | Exploratory | Small historical association in one regime; not tradeable or causal. |

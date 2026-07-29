@@ -1,40 +1,38 @@
 # Turkish Investment Intelligence Platform
 
-An end-to-end research platform for the Turkish fund and equity market:
-automated data pipeline, analytics engine, precomputed intelligence
-terminal, auto-generated reports, and reproducible research studies —
-built on public data (TEFAS, KAP, Yahoo).
+An open, public-data research platform for Turkish funds and listed shares.
+It combines scheduled data collection, reproducible analysis, a Streamlit
+research terminal and a public web app.
 
-## Why it exists
+**Start here:** [plain-English project guide](docs/START_HERE.md) ·
+[current research results](docs/RESULTS.md) ·
+[technical methodology](docs/METHODOLOGY.md)
 
-Turkey has one of the most data-rich retail fund markets in the world —
-daily NAVs, AUM, **investor counts**, and portfolio allocations for
-~2,000 mutual funds are public — yet almost all retail tooling stops at
-"which fund returned the most?" That question is close to meaningless
-in a 40%-inflation economy.
+The platform is for research and education. It is not investment advice,
+personalised portfolio advice, or a promise of future returns.
 
-This platform answers the questions professionals ask instead:
+## What it helps you explore
 
-- *What risk was taken to earn that return?* (factor models, attribution)
-- *Where is investor money actually moving?* (exact share-count flows)
-- *Is the manager skilled, or just exposed?* (skill vs suitability scores)
-- *Am I paying active fees for an index?* (closet-index detection)
-
-## What's inside
-
-| | |
-|---|---|
-| **Data** | 1.06M daily fund-price rows (NAV/AUM/investors), 4.5M allocation rows, 613 BIST stocks OHLCV, 17 benchmark series — Jan 2024 → present, refreshed nightly |
-| **Pipeline** | scheduled ETL with logging, retry, health checks, failure alerts ([architecture](docs/ARCHITECTURE.md)) |
-| **Terminal** | 8-page Streamlit app reading precomputed tables — pages load in ~0.1 s |
-| **Public web app** | polished Next.js 16 site reading the Supabase serving copy ([web/](web/)) — screener, fund profiles, market, research |
-| **Products** | auto-generated [monthly intelligence report](reports/), rule-based per-fund investment memos |
-| **Research** | reproducible studies with documented [methodology](docs/METHODOLOGY.md) |
+- Fund NAV, assets under management, investor counts and allocation data from
+  the observed TEFAS universe.
+- Monthly stock-level fund holdings from available KAP portfolio reports.
+- Fund flows, drawdowns, factor exposures and index-like behaviour.
+- BIST daily-price research and delayed intraday monitoring.
+- Reproducible research questions, including results that failed stronger
+  tests.
 
 ```
-TEFAS · KAP · EVDS · Yahoo  →  ETL (nightly, GitHub Actions)
-   →  raw tables (SQLite)  →  analytics engine  →  presentation tables
-   →  terminal · reports · memos · research
+TEFAS / KAP / TCMB EVDS / Yahoo Finance
+                |
+                v
+   scheduled collection + validation checks
+                |
+                v
+      stored data + calculated analytics
+                |
+      +---------+----------+
+      v                    v
+web application      Streamlit terminal, reports and research
 ```
 
 ![Market overview](docs/screenshots/market.png)
@@ -44,59 +42,81 @@ TEFAS · KAP · EVDS · Yahoo  →  ETL (nightly, GitHub Actions)
   <img src="docs/screenshots/intelligence.png" width="49%" />
 </p>
 
-## Main findings
+## Current research position
 
-1. **[The TEFAS NAV timing lag](docs/research/04-nav-timing-lag.md)** —
-   NAVs dated *t* reflect the *t−1* close (+2 days for global assets).
-   Correcting it moved a BIST30 index fund's measured beta from 0.12 to
-   0.995 — and erased what looked like 31 points of "alpha" on a
-   foreign tech fund. Same-day analysis of TEFAS data is structurally
-   wrong.
-2. **[Retail flows are mildly contrarian](docs/research/01-contrarian-flows.md)** —
-   equity-fund inflows predict *lower* BIST returns (t≈−2), but only in
-   calm markets and only for domestic equity: a complacency phenomenon.
-3. **[Investors chase quarterly winners](docs/research/02-performance-chasing.md)** —
-   flows respond to trailing 63-day returns (t≈3.0), not weekly moves.
-4. **[~1 in 5 "active" equity funds is a closet indexer](docs/research/03-closet-indexing.md)** —
-   of 236 large "active" equity funds, 52 run R²≥0.85 at β≈1 with no
-   positive alpha (excess-of-cash, NAV resets clipped), including major
-   bank funds at R²>0.95.
+The project does not turn a historical chart into a recommendation. It records
+what is measured, exploratory, inconclusive and retired.
 
-## Getting started
+| Topic | Current position |
+|---|---|
+| TEFAS NAV timing | **Measured:** a market-date alignment correction is necessary before interpreting beta or alpha. |
+| Index-like active funds | **Descriptive:** in one study, 52 of 236 large active-labelled funds closely tracked their benchmark. This is not a fee or value judgement. |
+| Fund flows | **Exploratory:** a small historical association is not a tradeable or causal conclusion. |
+| “Investors chase winners” | **Retired:** the initial result did not survive a stronger fund-level test. |
+| Daily stock-attention continuation | **Rejected for use:** the initial next-day test was negative. There is no live buy, sell or short signal. |
+| Early-session stock behaviour | **Data collection in progress:** 5-minute bars are being captured prospectively for a future test. |
 
-```bash
-pip install -r requirements.txt
-python -m tefaslab ingest --start 2024-01-01   # backfill (~30 min)
-python -m tefaslab benchmarks && python -m tefaslab stocks --start 2024-01-01
-python -m tefaslab classify && python -m tefaslab daily --skip-raw
-streamlit run app.py
-```
-
-Full command reference: [docs/USAGE.md](docs/USAGE.md)
+Read [Current research results](docs/RESULTS.md) for the plain-language
+explanation, figures, assumptions and links to every detailed study.
 
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md) — ETL design, layers, operations
-- [Methodology](docs/METHODOLOGY.md) — every metric defined, with limitations
-- [Audit](docs/AUDIT.md) — institutional-readiness audit: what was checked, what was found, what was fixed
-- [Monitoring](docs/MONITORING.md) — how failures are caught and surfaced (daily health monitor + GitHub alerts)
-- [SWOT](docs/SWOT.md) — honest self-assessment: weaknesses, threats, and mitigations
-- [KAP holdings](docs/KAP_HOLDINGS.md) — the stock-level holdings pipeline: status, upsides, limitations
-- [Data dictionary](docs/DATA_DICTIONARY.md) — every table and column
-- [Research notes](docs/research/) — the four findings as standalone studies
-- [Usage](docs/USAGE.md) — CLI reference and database schema
+### For readers and users
 
-Tests: `pytest tests -q` (runs in CI on every push).
+- [Start here: a plain-English guide](docs/START_HERE.md) - what exists,
+  what the project does and does not claim, plus a terminology guide.
+- [Current research results](docs/RESULTS.md) - what worked, failed or still
+  needs evidence.
+- [KAP holdings status](docs/KAP_HOLDINGS.md) - what monthly holdings data
+  means, coverage limitations and recovery status.
+- [Usage guide](docs/USAGE.md) - commands for running the terminal and data
+  pipeline locally.
 
-## Status & roadmap
+### For research and technical review
 
-Active. Done recently: institutional audit (with fixes), EMK pension
-funds, Newey–West + out-of-sample robustness, TCMB EVDS regime engine,
-and the **KAP holdings pipeline** — monthly stock-level fund holdings
-(ticker/ISIN/quantity/value/weight) scanned, parsed and queryable
-(`holdings who ASELS`); status, upsides and accepted limitations in
-[docs/KAP_HOLDINGS.md](docs/KAP_HOLDINGS.md). History accumulates
-forward nightly. Next: active share + crowding analytics on top of
-holdings, holdings-based attribution, screener, alerts.
+- [Methodology](docs/METHODOLOGY.md) - calculations, assumptions, hypothesis
+  control and claim standards.
+- [Research notes](docs/research/README.md) - detailed studies and
+  reproducibility commands.
+- [Data policy](docs/DATA_POLICY.md) - data sources, coverage, corrections,
+  privacy and source-use limits.
+- [Data dictionary](docs/DATA_DICTIONARY.md) - stored tables and fields.
+- [Signal Lab](docs/SIGNAL_LAB.md) - how a future idea can become tested
+  decision-support, without pretending an untested idea is a signal.
 
-*Not investment advice. Built for research and education.*
+### For operations
+
+- [Architecture](docs/ARCHITECTURE.md) - pipeline and serving design.
+- [Monitoring](docs/MONITORING.md) - freshness, coverage and source checks.
+- [Operations](docs/OPERATIONS.md) - releases, incidents and recovery.
+- [Audit](docs/AUDIT.md) and [SWOT](docs/SWOT.md) - known gaps and controls.
+
+## Getting started locally
+
+```bash
+pip install -r requirements.txt
+python -m tefaslab ingest --start 2024-01-01
+python -m tefaslab benchmarks
+python -m tefaslab stocks --start 2024-01-01
+python -m tefaslab classify
+python -m tefaslab daily --skip-raw
+streamlit run app.py
+```
+
+The complete command reference is in [docs/USAGE.md](docs/USAGE.md).
+
+## Data and research limits
+
+- Sources are public interfaces, not guaranteed feeds. They can change,
+  throttle, have gaps or require correction.
+- KAP holdings are monthly reports, not live portfolios. Missing data means
+  unknown, not zero.
+- Dated fee data is not yet available, so gross exposure analysis is not a
+  statement about investor net returns.
+- The current fund-history and holdings universe are not a complete history of
+  every Turkish vehicle.
+- Historical price patterns do not establish executable returns, especially
+  without order-book, spread and fill data.
+
+See [Data policy](docs/DATA_POLICY.md) and [Methodology](docs/METHODOLOGY.md)
+for the full limits and correction policy.

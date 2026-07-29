@@ -1,38 +1,45 @@
 # Turkish Investment Intelligence Platform
 
-An end-to-end research platform for the Turkish fund and equity
-market, built on public data (TEFAS, KAP, TCMB EVDS, Yahoo).
+An open, public-data research platform for Turkish funds and shares. It helps
+you explore what the data says while making the limits visible. It is not
+investment advice or a promise of future returns.
+
+**New here? Start with the [plain-English guide](START_HERE.html) and the
+[current research results](RESULTS.html).**
+
 Source: [github.com/amirremirr/turkish-investment-intelligence](https://github.com/amirremirr/turkish-investment-intelligence)
 
 ![Market overview](screenshots/market.png)
 
 ## What it does
 
-- **Data**: 2,457 funds (mutual + pension), 1.3M daily NAV/AUM/investor
-  rows, 4,500+ portfolio-allocation snapshots per day, 613 BIST stocks,
-  macro series — refreshed nightly by a scheduled cloud pipeline.
-- **Analytics**: 4-factor models with the NAV-lag correction, exact
-  share-count fund flows, Manager Skill vs Investor Suitability
-  scores, closet-index detection, macro regime engine.
-- **Holdings**: monthly **stock-level fund holdings** parsed from KAP
-  portfolio disclosures — crowding, peer active share, stock-level
-  attribution.
-- **Products**: an 8-page terminal (screenshot above), auto-generated
-  monthly intelligence reports, rule-based investment memos.
+- **Funds**: daily NAV, size, investor-count and allocation data for the
+  observed TEFAS universe.
+- **Holdings**: monthly stock-level fund holdings parsed from available KAP
+  portfolio reports; coverage is forward-built and not yet universal.
+- **Shares**: daily BIST prices and delayed intraday monitoring, used for
+  clearly labelled exploratory research.
+- **Analytics**: factor exposures, fund flows, index-likeness comparisons,
+  drawdowns and category-relative research scores.
+- **Products**: a web app, an eight-page Streamlit terminal, reports and
+  reproducible research notes.
 
-## Research
+## Research: the honest summary
 
-Five reproducible studies — start here:
-**[Research notes](research/)** · [Methodology](METHODOLOGY.html) ·
-[Audit](AUDIT.html) · [SWOT](SWOT.html)
+The project does not turn a historical chart into a recommendation. Current
+conclusions include:
 
-| Finding | Evidence |
+| Finding | Status and evidence |
 |---|---|
-| Retail equity-fund flows are mildly **contrarian** | NW t=−2.5 at 21d; calm markets only |
-| Aggregate performance chasing | **Retired:** does not survive the fund-level fixed-effects test (t about 1.2) |
-| **52 closet index funds** among 236 large "active" equity funds | R²≥0.85, β≈1, α≤0 (excess-of-cash) |
-| TEFAS **NAVs lag the market** (+1d/+2d) | index-fund β: 0.12 same-day → 0.995 lagged |
-| The 2026 equity rally is **price effect, not conviction** | AUM share ↑ 5.4→9% with negative flows |
+| TEFAS NAV timing needs a market-date lag | **Measured:** correcting the timing moved one liquid index-fund beta from about 0.12 to 0.995. |
+| 52 index-like funds among 236 large active funds | **Descriptive:** a similarity measure, not a net-of-fee judgement. |
+| Retail equity-fund flows look mildly contrarian | **Exploratory:** small effect in one regime; not tradeable or causal. |
+| "Investors chase winners" | **Retired:** it failed the stronger fund-level test. |
+| Daily stock-attention continuation | **Rejected for use:** the initial next-day result was negative; intraday evidence is now being collected prospectively. |
+
+Read [the complete results register](RESULTS.html), then use the
+[research notes](research/) and [methodology](METHODOLOGY.html) for the full
+methods, assumptions and reproducibility commands.
 
 ## Terminal
 
@@ -42,15 +49,15 @@ Five reproducible studies — start here:
 
 ## Documentation
 
-- [Architecture](ARCHITECTURE.html) — ETL warehouse design, operations
-- [Methodology](METHODOLOGY.html) — every metric defined, with limitations
-- [Institutional audit](AUDIT.html) — what was checked, found, fixed
-- [KAP holdings pipeline](KAP_HOLDINGS.html) — status, upsides, limitations
-- [Data dictionary](DATA_DICTIONARY.html)
-- [Usage / CLI reference](USAGE.html)
+- [Start here](START_HERE.html) - plain-English guide to the project, data and limits
+- [Current research results](RESULTS.html) - what worked, failed or remains unproven
+- [Methodology](METHODOLOGY.html) - definitions, assumptions, statistics and claim rules
+- [Data policy](DATA_POLICY.html) - sources, coverage, legal posture and corrections
+- [KAP holdings pipeline](KAP_HOLDINGS.html) - monthly holdings status, coverage and limitations
+- [Research notes](research/) - detailed studies with reproduction commands
+- [Architecture](ARCHITECTURE.html) - data pipeline and serving design
+- [Monitoring](MONITORING.html) and [operations](OPERATIONS.html) - data-health controls and response process
+- [Data dictionary](DATA_DICTIONARY.html) - every stored table and field
+- [Usage and CLI reference](USAGE.html) - how to run the project locally
 
-*Not investment advice. Built for research and education.*
-## Operations and governance
-
-- [Operations, releases & incident response](OPERATIONS.html)
-- [Data corrections, privacy & public-research policy](DATA_POLICY.html)
+*Built for research and education. Not investment advice.*
