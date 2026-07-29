@@ -23,7 +23,7 @@ import yfinance as yf
 from sqlalchemy import create_engine, text
 
 from .publish import serving_url
-from .exhaustion import build_watch
+from .exhaustion import build_watch, ledger_rows
 
 
 def _clean(o):
@@ -37,6 +37,44 @@ def _clean(o):
     if isinstance(o, list):
         return [_clean(v) for v in o]
     return o
+
+
+LEDGER_DDL = """
+CREATE TABLE IF NOT EXISTS signal_observations (
+    signal_id TEXT PRIMARY KEY, signal_version TEXT NOT NULL,
+    as_of_timestamp TEXT NOT NULL, signal_date TEXT NOT NULL, ticker TEXT NOT NULL,
+    state TEXT NOT NULL, classification TEXT NOT NULL, features_json TEXT NOT NULL,
+    source_quality TEXT NOT NULL, data_cutoff TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS paper_trades (
+    paper_trade_id TEXT PRIMARY KEY, signal_id TEXT NOT NULL,
+    status TEXT NOT NULL, entry_timestamp TEXT, intended_entry REAL,
+    observed_entry REAL, exit_timestamp TEXT, observed_exit REAL,
+    gross_return REAL, costs_bps REAL, net_return REAL,
+    rejection_reason TEXT, source_quality TEXT NOT NULL, recorded_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_signal_observations_date
+ON signal_observations(signal_date, signal_version);
+"""
+
+
+def _record_signal_observations(engine, candidates: list[dict], now: str) -> int:
+    """Idempotently persist research observations; never create trade claims."""
+    rows = ledger_rows(candidates, now)
+    with engine.begin() as conn:
+        for ddl in LEDGER_DDL.strip().split(";\n"):
+            if ddl.strip():
+                conn.execute(text(ddl))
+        for row in rows:
+            conn.execute(text("""
+                INSERT INTO signal_observations
+                (signal_id, signal_version, as_of_timestamp, signal_date, ticker,
+                 state, classification, features_json, source_quality, data_cutoff, created_at)
+                VALUES (:signal_id, :signal_version, :as_of_timestamp, :signal_date, :ticker,
+                        :state, :classification, :features_json, :source_quality, :data_cutoff, :created_at)
+                ON CONFLICT (signal_id) DO NOTHING
+            """), row)
+    return len(rows)
 
 
 def refresh(batch: int = 200) -> dict:
@@ -98,6 +136,7 @@ def refresh(batch: int = 200) -> dict:
     live["turnover_mn"] = live["price"] * live["volume"] / 1e6
     live["vol_vs_20d"] = live["volume"] / live["avg_vol"]
     exhaustion_watch = build_watch(history, live)
+    recorded_signals = _record_signal_observations(engine, exhaustion_watch, now)
     liquid = live[live["turnover_mn"] >= 10]
 
     breadth = {
@@ -154,7 +193,8 @@ def refresh(batch: int = 200) -> dict:
             {"v": payload, "t": datetime.utcnow().isoformat(
                 timespec="seconds")})
     engine.dispose()
-    return {"ts": now, "quotes": len(quotes), **breadth}
+    return {"ts": now, "quotes": len(quotes), "recorded_signals": recorded_signals,
+            **breadth}
 
 
 if __name__ == "__main__":

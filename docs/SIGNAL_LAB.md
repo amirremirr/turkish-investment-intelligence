@@ -159,9 +159,10 @@ fails any gate, it becomes `retired`; it is not retuned on the same paper data.
 
 ## Delivery sequence
 
-1. **Now** — experimental exhaustion watch; complete.
-2. **Next** — create immutable signal and paper-trade tables; begin prospective
-   quiet-momentum and exhaustion records without public long/short calls.
+1. **Now** — experimental exhaustion watch and immutable cloud signal ledger;
+   complete. The ledger records qualifying exhaustion observations only.
+2. **Next** — add close-settlement and paper-trade evaluation, then begin
+   prospective quiet-momentum records without public long/short calls.
 3. **Data upgrade** — ingest and retain 1/5-minute bars plus opening-auction
    data; add execution-quality fields.
 4. **Intraday research** — test gap path, VWAP entry, time stops, and adverse

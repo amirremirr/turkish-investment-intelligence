@@ -5,7 +5,12 @@ It uses yesterday's completed daily bar and today's provider-reported open.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import pandas as pd
+
+
+SIGNAL_VERSION = "exhaustion-v1"
 
 
 def _prior_up_streak(closes: pd.Series) -> int:
@@ -59,3 +64,25 @@ def build_watch(history: pd.DataFrame, live: pd.DataFrame, limit: int = 10) -> l
             "severity": len(reasons),
         })
     return sorted(rows, key=lambda r: (r["severity"], r["opening_gap_pct"]), reverse=True)[:limit]
+
+
+def ledger_rows(candidates: list[dict], as_of_timestamp: str) -> list[dict]:
+    """Create immutable, idempotent research-observation rows."""
+    signal_date = as_of_timestamp[:10]
+    rows = []
+    for candidate in candidates:
+        key = f"{SIGNAL_VERSION}|{signal_date}|{candidate['ticker']}|avoid_chase"
+        rows.append({
+            "signal_id": hashlib.sha256(key.encode()).hexdigest(),
+            "signal_version": SIGNAL_VERSION,
+            "as_of_timestamp": as_of_timestamp,
+            "signal_date": signal_date,
+            "ticker": candidate["ticker"],
+            "state": "research",
+            "classification": "avoid_chase",
+            "features_json": json.dumps(candidate, ensure_ascii=False, sort_keys=True),
+            "source_quality": "delayed_daily_open",
+            "data_cutoff": as_of_timestamp,
+            "created_at": as_of_timestamp,
+        })
+    return rows

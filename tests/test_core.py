@@ -105,6 +105,10 @@ def test_exhaustion_watch_requires_crowded_prior_day_and_opening_gap():
     rows = exhaustion.build_watch(history, live)
     assert len(rows) == 1
     assert rows[0]["opening_gap_pct"] > 1 and rows[0]["turnover_shock"] >= 2
+    ledger = exhaustion.ledger_rows(rows, "2026-02-02 07:15")
+    assert ledger[0]["signal_version"] == "exhaustion-v1"
+    assert ledger[0]["classification"] == "avoid_chase"
+    assert exhaustion.ledger_rows(rows, "2026-02-02 07:15")[0]["signal_id"] == ledger[0]["signal_id"]
 
 
 # --------------------------------------------------------- classifier
