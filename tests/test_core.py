@@ -163,6 +163,19 @@ def test_moderate_momentum_collector_preserves_the_7_to_9_cohort():
     assert ledger[0]["signal_version"] == exhaustion.MODERATE_7_9_VERSION
 
 
+def test_extreme_negative_gap_cohort_is_research_only():
+    dates = pd.bdate_range("2026-01-01", periods=22)
+    history = pd.DataFrame({"ticker": "AAA", "date": dates,
+                            "close": [100.0] * 21 + [110.0],
+                            "volume": [100_000.0] * 22, "title": "Alpha"})
+    live = pd.DataFrame({"open": [109.0], "title": ["Alpha"]}, index=["AAA"])
+    rows = exhaustion.build_extreme_negative_gap_cohort(history, live)
+    assert len(rows) == 1
+    assert rows[0]["opening_gap_pct"] < 0
+    assert rows[0]["signal_version"] == exhaustion.EXTREME_NEGATIVE_GAP_VERSION
+    assert exhaustion.ledger_rows(rows, "2026-02-02 07:15")[0]["classification"] == "research_candidate"
+
+
 # --------------------------------------------------------- classifier
 
 @pytest.mark.parametrize("title,expected", [

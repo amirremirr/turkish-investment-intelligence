@@ -23,7 +23,8 @@ import yfinance as yf
 from sqlalchemy import create_engine, text
 
 from .publish import serving_url
-from .exhaustion import build_moderate_momentum_cohorts, build_watch, ledger_rows
+from .exhaustion import (build_extreme_negative_gap_cohort,
+                         build_moderate_momentum_cohorts, build_watch, ledger_rows)
 
 
 def _clean(o):
@@ -193,7 +194,8 @@ def refresh(batch: int = 200) -> dict:
     live["vol_vs_20d"] = live["volume"] / live["avg_vol"]
     exhaustion_watch = build_watch(history, live)
     moderate_cohorts = build_moderate_momentum_cohorts(history, live)
-    signal_rows = ledger_rows(exhaustion_watch + moderate_cohorts, now)
+    extreme_negative_gap = build_extreme_negative_gap_cohort(history, live)
+    signal_rows = ledger_rows(exhaustion_watch + moderate_cohorts + extreme_negative_gap, now)
     recorded_signals = _record_signal_observations(engine, signal_rows)
     refreshed_bars = _capture_signal_intraday_bars(engine, signal_rows, now)
     liquid = live[live["turnover_mn"] >= 10]
@@ -254,6 +256,7 @@ def refresh(batch: int = 200) -> dict:
                             r["cohort"] == "moderate_4_7_normal_turnover" for r in moderate_cohorts),
                         "moderate_7_9_normal_turnover": sum(
                             r["cohort"] == "moderate_7_9_normal_turnover" for r in moderate_cohorts),
+                        "extreme_9plus_negative_gap": len(extreme_negative_gap),
                     },
                     "note": "Research collection only; no cohort is a buy, sell, or short signal.",
                 }}),

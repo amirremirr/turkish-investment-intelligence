@@ -23,6 +23,7 @@ const COHORT_LABELS: Record<string, string> = {
   "exhaustion-v1": "Crowded exhaustion (risk context)",
   "moderate-4-7-normal-turnover-v1": "Moderate 4-7% / ordinary turnover",
   "moderate-7-9-normal-turnover-v1": "Moderate 7-9% / ordinary turnover",
+  "extreme-9plus-negative-gap-v1": "9%+ move / negative opening gap",
 };
 
 function dateRange(first: string | null, last: string | null) {
@@ -211,6 +212,47 @@ export default async function SignalLabPage() {
             Does an event that survives the opening auction hold for 5, 15, 30
             or 60 minutes before later reversal? Only the prospective 5-minute
             data can answer this.
+          </p>
+        </Card>
+      </section>
+
+      <section>
+        <SectionTitle hint="bounded historical discovery run; not a live recommendation">
+          Latest search result
+        </SectionTitle>
+        <Card>
+          <p className="text-sm text-muted">
+            No tested condition passed the strict historical triage rule after
+            50 bps costs and multiple-testing correction. The two rows below
+            had positive recent-period averages and medians, but neither was
+            statistically reliable; they are being collected prospectively to
+            test whether that apparent edge survives.
+          </p>
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr className="border-b text-left text-muted">
+                <th className="py-2 font-medium">Prospective cohort</th><th className="py-2 text-right font-medium">Days</th>
+                <th className="py-2 text-right font-medium">Mean after 50 bps</th><th className="py-2 text-right font-medium">Median after 50 bps</th>
+                <th className="py-2 text-right font-medium">Evidence status</th>
+              </tr></thead>
+              <tbody>
+                <tr className="border-b">
+                  <td className="py-2">7-9% move with ordinary turnover</td><td className="tnum py-2 text-right">43</td>
+                  <td className="tnum py-2 text-right text-pos">+0.41%</td><td className="tnum py-2 text-right text-pos">+0.17%</td>
+                  <td className="py-2 text-right text-muted">Exploratory; FDR q=1.0</td>
+                </tr>
+                <tr>
+                  <td className="py-2">9%+ move with a negative opening gap</td><td className="tnum py-2 text-right">102</td>
+                  <td className="tnum py-2 text-right text-pos">+0.44%</td><td className="tnum py-2 text-right text-pos">+0.09%</td>
+                  <td className="py-2 text-right text-muted">Exploratory; FDR q=1.0</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-3 text-xs text-muted">
+            Both figures are the post-2026-01-01 historical segment from the
+            30 July 2026 discovery run. They are shown for transparency, not
+            because they are proven signals.
           </p>
         </Card>
       </section>

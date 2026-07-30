@@ -130,6 +130,22 @@ than repeatedly adjusted to fit old data.
 
 [Read the full test design](research/moderate-momentum.md)
 
+### 7a. Bounded search for a positive condition
+
+**Status: no historical condition passed the triage rule**
+
+A fixed discovery matrix tested return buckets alone and paired each with one
+observable condition (turnover, opening gap, close strength, prior run-up or
+prior up days), with 50 bps costs and multiple-testing correction. No row had
+a positive mean and median after costs, at least 30 independent days and an
+FDR q-value at or below 0.10.
+
+Two recent-period rows had positive mean and median but FDR q=1.0: the existing
+7-9% ordinary-turnover cohort and a 9%+ prior-day move that opened below the
+previous close. Both are now prospective research cohorts, not signals.
+
+[Read the complete discovery method](research/momentum-discovery.md)
+
 ### 8. Could there be a short window just after the open?
 
 **Status: data collection in progress; no result yet**

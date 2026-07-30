@@ -13,6 +13,7 @@ import pandas as pd
 SIGNAL_VERSION = "exhaustion-v1"
 MODERATE_4_7_VERSION = "moderate-4-7-normal-turnover-v1"
 MODERATE_7_9_VERSION = "moderate-7-9-normal-turnover-v1"
+EXTREME_NEGATIVE_GAP_VERSION = "extreme-9plus-negative-gap-v1"
 
 
 def _prior_up_streak(closes: pd.Series) -> int:
@@ -129,6 +130,49 @@ def build_moderate_momentum_cohorts(history: pd.DataFrame,
                 "prior 20-session median turnover at least TRY 10m",
                 "close strength at least 0.60", "at most one prior up day",
             ],
+        })
+    return rows
+
+
+def build_extreme_negative_gap_cohort(history: pd.DataFrame,
+                                      live: pd.DataFrame) -> list[dict]:
+    """Collect the one broad, positive recent-period discovery candidate.
+
+    The historical 9%+ / negative-open row did *not* pass multiple-testing
+    control. It is retained only as a named prospective cohort so future data
+    can decide whether its positive mean and median were real or luck.
+    """
+    rows: list[dict] = []
+    for ticker, frame in history.groupby("ticker"):
+        frame = frame.sort_values("date")
+        if len(frame) < 22 or ticker not in live.index:
+            continue
+        yesterday, prior = frame.iloc[-1], frame.iloc[-21:-1]
+        prev_close = frame.iloc[-2].close
+        opening = live.loc[ticker, "open"]
+        if pd.isna(opening) or opening <= 0 or prev_close <= 0:
+            continue
+        daily_return = yesterday.close / prev_close - 1
+        normal_turnover = (prior.close * prior.volume).median()
+        if normal_turnover < 10_000_000:
+            continue
+        gap = opening / yesterday.close - 1
+        if daily_return < .09 or gap >= 0:
+            continue
+        shock = yesterday.close * yesterday.volume / normal_turnover
+        rows.append({
+            "ticker": ticker, "title": str(live.loc[ticker].get("title") or "")[:40],
+            "previous_close_adjusted": round(float(yesterday.close), 4),
+            "opening_price": round(float(opening), 2),
+            "opening_gap_pct": round(float(gap * 100), 2),
+            "previous_day_return_pct": round(float(daily_return * 100), 2),
+            "turnover_shock": round(float(shock), 2),
+            "prior_20_median_turnover_try": round(float(normal_turnover), 2),
+            "cohort": "extreme_9plus_negative_gap",
+            "signal_version": EXTREME_NEGATIVE_GAP_VERSION,
+            "classification": "research_candidate",
+            "reasons": ["prior-day gain at least 9%", "opening gap below 0%",
+                        "prior 20-session median turnover at least TRY 10m"],
         })
     return rows
 

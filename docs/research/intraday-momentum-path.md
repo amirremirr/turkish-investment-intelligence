@@ -13,7 +13,11 @@ previous-day gain at least 7%, turnover at least 2x normal and next-open gap at
 least 1%; (2) moderate 4-7% gain with ordinary 0.5-1.0x turnover; and (3)
 moderate 7-9% gain with ordinary 0.5-1.0x turnover. The two moderate cohorts
 also require at least TRY 10m prior-20-session median turnover, close strength
-at least 0.60 and no more than one preceding up day.
+at least 0.60 and no more than one preceding up day; (4) a 9%+ prior-day gain
+with prior-20-session median turnover at least TRY 10m that opens below the
+previous close. The fourth cohort had a positive recent historical mean and
+median but did not survive multiple-testing control, so it is collected only
+for prospective replication.
 
 Each record retains:
 
