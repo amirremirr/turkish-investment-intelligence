@@ -17,7 +17,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from tefaslab import attention, classify, db, evds, exhaustion, flows, metrics, research  # noqa: E402
+from tefaslab import attention, classify, db, evds, exhaustion, flows, metrics, momentum_discovery, research  # noqa: E402
 from tefaslab.kap import parse_pdf_holdings  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -94,6 +94,38 @@ def test_attention_study_uses_next_session_open_without_lookahead(tmp_path):
     freshness = result["freshness_splits"]
     assert (freshness["events"] > 0).all()
     assert (freshness["portfolios"] <= freshness["events"]).all()
+
+
+def test_momentum_discovery_writes_the_complete_condition_family(tmp_path):
+    import sqlite3
+
+    conn = sqlite3.connect(":memory:")
+    conn.executescript("""
+        CREATE TABLE stocks(ticker TEXT PRIMARY KEY, sector TEXT);
+        CREATE TABLE stock_prices(
+            ticker TEXT, date TEXT, open REAL, high REAL, low REAL, close REAL,
+            volume REAL, PRIMARY KEY(ticker, date));
+    """)
+    conn.executemany("INSERT INTO stocks VALUES (?, ?)", [("AAA", "Industry"), ("BBB", "Banks")])
+    dates = pd.bdate_range("2025-01-01", periods=70)
+    rows = []
+    for ticker in ("AAA", "BBB"):
+        close = 100.0
+        for i, dt in enumerate(dates):
+            opening, high, low, volume = close, close * 1.01, close * .99, 200_000.0
+            if ticker == "AAA" and i == 62:
+                close, high, low, volume = opening * 1.03, opening * 1.03, opening, 200_000.0
+            elif ticker == "AAA" and i == 63:
+                opening, close, high, low = close * 1.002, close * 1.012, close * 1.012, close * .998
+            rows.append((ticker, dt.strftime("%Y-%m-%d"), opening, high, low, close, volume))
+    conn.executemany("INSERT INTO stock_prices VALUES (?,?,?,?,?,?,?)", rows)
+    result = momentum_discovery.run_momentum_discovery(conn, split="2026-01-01")
+    summary = result["summary"]
+    assert not summary.empty
+    assert {"return only", "return + turnover", "return + opening gap"}.issubset(summary["family"])
+    assert "provisional_candidate" in summary
+    path = momentum_discovery.write_momentum_discovery_outputs(result, tmp_path)
+    assert path.exists() and (tmp_path / "momentum_discovery_summary.csv").exists()
 
 
 def test_exhaustion_watch_requires_crowded_prior_day_and_opening_gap():

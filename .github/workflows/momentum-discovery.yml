@@ -1,0 +1,59 @@
+name: Bounded momentum discovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "Optional sample start YYYY-MM-DD"
+        required: false
+        type: string
+      end:
+        description: "Optional sample end YYYY-MM-DD"
+        required: false
+        type: string
+      split:
+        description: "Historical reporting split YYYY-MM-DD (not independent validation)"
+        default: "2026-01-01"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: momentum-discovery
+  cancel-in-progress: false
+
+jobs:
+  study:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Restore latest research database
+        uses: actions/cache/restore@v4
+        with:
+          path: data/funds.db
+          key: momentum-discovery-db-${{ github.run_id }}
+          restore-keys: funds-db-
+      - name: Run complete declared condition family
+        run: |
+          test -f data/funds.db || { echo "::error::No persisted database cache found"; exit 1; }
+          ARGS=(research momentum-discovery --split "${{ inputs.split }}" --save reports/momentum-discovery)
+          if [ -n "${{ inputs.start }}" ]; then ARGS+=(--start "${{ inputs.start }}"); fi
+          if [ -n "${{ inputs.end }}" ]; then ARGS+=(--end "${{ inputs.end }}"); fi
+          python -m tefaslab "${ARGS[@]}"
+      - name: Upload complete results
+        uses: actions/upload-artifact@v7
+        with:
+          name: momentum-discovery-${{ github.run_number }}
+          retention-days: 90
+          path: reports/momentum-discovery/
+          if-no-files-found: error

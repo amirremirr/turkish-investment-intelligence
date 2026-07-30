@@ -16,6 +16,7 @@ exploratory, inconclusive or retired before linking back here.
 | 3 | [Closet-index classification](03-closet-indexing.md) | Descriptive | Index-like exposure classification, not a net-of-fee value claim. |
 | 4 | [The TEFAS NAV timing lag](04-nav-timing-lag.md) | Measured | Alignment correction for the documented liquid-fund tests. |
 | 5 | [The defensive Turkish investor](05-defensive-investor.md) | Exploratory | Historical synthesis, not a behavioural or allocation conclusion. |
+| 6 | [Bounded momentum-condition discovery](momentum-discovery.md) | Historical discovery | Fixed condition search; any survivor still requires prospective validation. |
 
 A future `validated` note must publish its pre-specified question, hypothesis
 family, frozen train/holdout split, effect-size threshold, snapshot hash and

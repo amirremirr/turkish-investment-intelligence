@@ -19,7 +19,7 @@ import sys
 
 from . import (attention, benchmarks, classify, compare, db, evds, factors, flows,
                health, ingest, intraday, kap, memo, metrics, ownership,
-               pipeline, publish, quality, regime, report, research,
+               momentum_discovery, pipeline, publish, quality, regime, report, research,
                rigor, rolling, smartmoney, stocks)
 
 
@@ -450,6 +450,20 @@ def cmd_research(args) -> None:
         if args.save:
             path = attention.write_attention_outputs(result, args.save)
             print(f"\nSaved full scenario outputs to {path.parent}")
+    elif args.study == "momentum-discovery":
+        result = momentum_discovery.run_momentum_discovery(
+            conn, start=args.start.isoformat() if args.start else None,
+            end=args.end.isoformat() if args.end else None, split=args.split)
+        summary = result["summary"]
+        candidates = result["candidates"]
+        assert isinstance(summary, pd.DataFrame) and isinstance(candidates, pd.DataFrame)
+        print("Bounded momentum-condition discovery (historical discovery only).\n"
+              "Every tested row uses a 50 bps cost sensitivity and FDR correction.\n")
+        print(candidates.round(4).to_string(index=False) if not candidates.empty
+              else "No condition passed the declared historical triage rule.")
+        if args.save:
+            path = momentum_discovery.write_momentum_discovery_outputs(result, args.save)
+            print(f"\nSaved full discovery outputs to {path.parent}")
     elif args.study == "flows":
         print(f"Do {args.category} fund flows predict future BIST100 "
               "returns?\n(beta = % BIST move per 1% AUM flow; caveat: "
@@ -715,7 +729,7 @@ def main() -> None:
     p.set_defaults(func=cmd_memo)
 
     p = sub.add_parser("research", help="run a research study")
-    p.add_argument("study", choices=["attention", "moderate-momentum", "flows", "flows-by-category",
+    p.add_argument("study", choices=["attention", "moderate-momentum", "momentum-discovery", "flows", "flows-by-category",
                                      "flows-oos", "chasing", "closet",
                                      "diagnostics", "gate", "catret",
                                      "mandate", "panel", "rigor"])
