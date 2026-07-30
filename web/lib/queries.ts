@@ -604,6 +604,20 @@ export type SignalCohortStatus = {
   signalsWithBars: number;
 };
 
+export type SignalObservation = {
+  signalId: string;
+  signalVersion: string;
+  signalDate: string;
+  asOfTimestamp: string;
+  ticker: string;
+  classification: string;
+  priorDayReturnPct: number | null;
+  openingGapPct: number | null;
+  turnoverShock: number | null;
+  cohort: string | null;
+  intradayBars: number;
+};
+
 // Signal tables are created by the intraday collector, rather than during the
 // normal database publish. Callers must still degrade safely before its first
 // successful run, so this query deliberately has no hidden fallback state.
@@ -647,6 +661,46 @@ export async function getSignalLabStatus(): Promise<SignalLabStatus> {
       signalsWithBars: Number(row.signals_with_bars),
     })),
   };
+}
+
+// The Signal Lab must expose its actual inputs, not just aggregate counters.
+// Features are an immutable JSON snapshot recorded at observation time.
+export async function getSignalLabObservations(limit = 60): Promise<SignalObservation[]> {
+  const rows = await sql`
+    SELECT o.signal_id, o.signal_version, o.signal_date, o.as_of_timestamp,
+           o.ticker, o.classification, o.features_json,
+           COUNT(b.bar_timestamp) AS intraday_bars
+    FROM signal_observations o
+    LEFT JOIN signal_intraday_bars b ON b.signal_id = o.signal_id
+    GROUP BY o.signal_id, o.signal_version, o.signal_date, o.as_of_timestamp,
+             o.ticker, o.classification, o.features_json
+    ORDER BY o.as_of_timestamp DESC, o.ticker ASC
+    LIMIT ${limit}`;
+  return rows.map((row) => {
+    let features: Record<string, unknown> = {};
+    try {
+      features = JSON.parse(row.features_json as string) as Record<string, unknown>;
+    } catch {
+      // A malformed historic row remains visible, with unavailable features.
+    }
+    const featureNumber = (name: string): number | null => {
+      const value = features[name];
+      return typeof value === "number" && Number.isFinite(value) ? value : null;
+    };
+    return {
+      signalId: row.signal_id as string,
+      signalVersion: row.signal_version as string,
+      signalDate: row.signal_date as string,
+      asOfTimestamp: row.as_of_timestamp as string,
+      ticker: row.ticker as string,
+      classification: row.classification as string,
+      priorDayReturnPct: featureNumber("previous_day_return_pct"),
+      openingGapPct: featureNumber("opening_gap_pct"),
+      turnoverShock: featureNumber("turnover_shock"),
+      cohort: typeof features.cohort === "string" ? features.cohort : null,
+      intradayBars: Number(row.intraday_bars),
+    };
+  });
 }
 
 export async function getCategoryFlows(): Promise<

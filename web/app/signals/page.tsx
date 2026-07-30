@@ -3,6 +3,8 @@ import { Badge, Card, PageHeader, SectionTitle, Stat } from "@/components/ui";
 import { num } from "@/lib/format";
 import {
   getSignalLabStatus,
+  getSignalLabObservations,
+  type SignalObservation,
   getStatus,
   type SignalLabStatus,
   type StatusMap,
@@ -18,6 +20,8 @@ export const metadata = {
 
 const REPO =
   "https://github.com/amirremirr/turkish-investment-intelligence/blob/main/docs";
+const DISCOVERY_RUN =
+  "https://github.com/amirremirr/turkish-investment-intelligence/actions/runs/30541186547";
 
 const COHORT_LABELS: Record<string, string> = {
   "exhaustion-v1": "Crowded exhaustion (risk context)",
@@ -89,10 +93,46 @@ function CaptureStatus({ data }: { data: SignalLabStatus | null }) {
   );
 }
 
+function RecentObservations({ rows }: { rows: SignalObservation[] }) {
+  return (
+    <Card>
+      <SectionTitle hint="immutable features captured at observation time">
+        Recent prospective observations
+      </SectionTitle>
+      {rows.length === 0 ? (
+        <p className="text-sm text-muted">No observations are available from the serving database yet.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead><tr className="border-b text-left text-muted">
+              <th className="py-2 font-medium">Date / time UTC</th><th className="py-2 font-medium">Stock</th>
+              <th className="py-2 font-medium">Cohort</th><th className="py-2 text-right font-medium">Prior day</th>
+              <th className="py-2 text-right font-medium">Open gap</th><th className="py-2 text-right font-medium">Turnover</th>
+              <th className="py-2 text-right font-medium">5-minute bars</th>
+            </tr></thead>
+            <tbody>{rows.map((row) => (
+              <tr key={row.signalId} className="border-b last:border-0">
+                <td className="tnum py-2 text-muted">{row.asOfTimestamp}</td>
+                <td className="py-2"><Link className="font-medium text-accent hover:underline" href={`/stocks/${row.ticker}`}>{row.ticker}</Link></td>
+                <td className="py-2">{COHORT_LABELS[row.signalVersion] ?? row.cohort ?? row.signalVersion}</td>
+                <td className="tnum py-2 text-right">{row.priorDayReturnPct == null ? "-" : `${row.priorDayReturnPct >= 0 ? "+" : ""}${num(row.priorDayReturnPct, 1)}%`}</td>
+                <td className="tnum py-2 text-right">{row.openingGapPct == null ? "-" : `${row.openingGapPct >= 0 ? "+" : ""}${num(row.openingGapPct, 1)}%`}</td>
+                <td className="tnum py-2 text-right">{row.turnoverShock == null ? "-" : `${num(row.turnoverShock, 1)}x`}</td>
+                <td className="tnum py-2 text-right">{num(row.intradayBars, 0)}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export default async function SignalLabPage() {
-  const [status, signalData] = await Promise.all([
+  const [status, signalData, observations] = await Promise.all([
     getStatus().catch((): StatusMap => ({})),
     getSignalLabStatus().catch((): SignalLabStatus | null => null),
+    getSignalLabObservations().catch((): SignalObservation[] => []),
   ]);
   const live = freshIntraday(status.intraday);
   const watch = live?.exhaustion_watch;
@@ -120,12 +160,13 @@ export default async function SignalLabPage() {
           Prospective data collection
         </SectionTitle>
         <p className="mb-3 max-w-3xl text-sm text-muted">
-          For each defined exhaustion event, the system stores a dated signal
+          For each declared research cohort, the system stores a dated signal
           record and any available adjusted 5-minute price bars. This lets us
           test the opening path later without rewriting history after seeing an
           outcome.
         </p>
         <CaptureStatus data={signalData} />
+        <div className="mt-4"><RecentObservations rows={observations} /></div>
       </section>
 
       <section>
@@ -278,6 +319,12 @@ export default async function SignalLabPage() {
           <a className="rounded-xl border bg-surface p-4 text-sm font-medium text-accent hover:bg-accent-soft" href={`${REPO}/research/intraday-momentum-path.md`} target="_blank" rel="noreferrer">Prospective intraday plan</a>
           <a className="rounded-xl border bg-surface p-4 text-sm font-medium text-accent hover:bg-accent-soft" href={`${REPO}/SIGNAL_LAB.md`} target="_blank" rel="noreferrer">Signal governance</a>
         </div>
+        <p className="mt-3 text-sm text-muted">
+          Need the complete historical rows used in the latest discovery run?
+          Open the <a className="text-accent hover:underline" href={DISCOVERY_RUN} target="_blank" rel="noreferrer">discovery workflow</a>,
+          then download the <b>momentum-discovery-1</b> artifact. It contains
+          the summary, every daily portfolio and every eligible stock event as CSV files.
+        </p>
       </section>
     </div>
   );
