@@ -111,6 +111,26 @@ def test_exhaustion_watch_requires_crowded_prior_day_and_opening_gap():
     assert exhaustion.ledger_rows(rows, "2026-02-02 07:15")[0]["signal_id"] == ledger[0]["signal_id"]
 
 
+def test_moderate_momentum_collector_preserves_the_7_to_9_cohort():
+    dates = pd.bdate_range("2026-01-01", periods=22)
+    history = pd.DataFrame({
+        "ticker": "AAA", "date": dates,
+        "open": [100.0] * 22, "high": [101.0] * 21 + [110.0],
+        "low": [99.0] * 21 + [100.0],
+        "close": [100.0] * 21 + [108.0],
+        # Prior 20 sessions each trade TRY 10m. The event trades 0.756x normal.
+        "volume": [100_000.0] * 21 + [70_000.0], "title": "Alpha",
+    })
+    live = pd.DataFrame({"open": [108.5], "title": ["Alpha"]}, index=["AAA"])
+    rows = exhaustion.build_moderate_momentum_cohorts(history, live)
+    assert len(rows) == 1
+    assert rows[0]["cohort"] == "moderate_7_9_normal_turnover"
+    assert rows[0]["signal_version"] == exhaustion.MODERATE_7_9_VERSION
+    ledger = exhaustion.ledger_rows(rows, "2026-02-02 07:15")
+    assert ledger[0]["classification"] == "research_candidate"
+    assert ledger[0]["signal_version"] == exhaustion.MODERATE_7_9_VERSION
+
+
 # --------------------------------------------------------- classifier
 
 @pytest.mark.parametrize("title,expected", [

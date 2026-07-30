@@ -592,13 +592,23 @@ export type SignalLabStatus = {
   signalsWithBars: number;
   firstBarAt: string | null;
   lastBarAt: string | null;
+  cohorts: SignalCohortStatus[];
+};
+
+export type SignalCohortStatus = {
+  signalVersion: string;
+  classification: string;
+  observations: number;
+  eventDays: number;
+  intradayBars: number;
+  signalsWithBars: number;
 };
 
 // Signal tables are created by the intraday collector, rather than during the
 // normal database publish. Callers must still degrade safely before its first
 // successful run, so this query deliberately has no hidden fallback state.
 export async function getSignalLabStatus(): Promise<SignalLabStatus> {
-  const [observations, bars] = await Promise.all([
+  const [observations, bars, cohorts] = await Promise.all([
     sql`SELECT COUNT(*) AS observations,
                COUNT(DISTINCT signal_date) AS event_days,
                MIN(signal_date) AS first_signal_date,
@@ -609,6 +619,15 @@ export async function getSignalLabStatus(): Promise<SignalLabStatus> {
                MIN(bar_timestamp) AS first_bar_at,
                MAX(bar_timestamp) AS last_bar_at
         FROM signal_intraday_bars`,
+    sql`SELECT o.signal_version, o.classification,
+               COUNT(DISTINCT o.signal_id) AS observations,
+               COUNT(DISTINCT o.signal_date) AS event_days,
+               COUNT(b.bar_timestamp) AS intraday_bars,
+               COUNT(DISTINCT b.signal_id) AS signals_with_bars
+        FROM signal_observations o
+        LEFT JOIN signal_intraday_bars b ON b.signal_id = o.signal_id
+        GROUP BY o.signal_version, o.classification
+        ORDER BY o.signal_version`,
   ]);
   return {
     observations: Number(observations[0].observations),
@@ -619,6 +638,14 @@ export async function getSignalLabStatus(): Promise<SignalLabStatus> {
     signalsWithBars: Number(bars[0].signals_with_bars),
     firstBarAt: (bars[0].first_bar_at as string | null) ?? null,
     lastBarAt: (bars[0].last_bar_at as string | null) ?? null,
+    cohorts: cohorts.map((row) => ({
+      signalVersion: row.signal_version as string,
+      classification: row.classification as string,
+      observations: Number(row.observations),
+      eventDays: Number(row.event_days),
+      intradayBars: Number(row.intraday_bars),
+      signalsWithBars: Number(row.signals_with_bars),
+    })),
   };
 }
 

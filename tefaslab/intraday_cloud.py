@@ -23,7 +23,7 @@ import yfinance as yf
 from sqlalchemy import create_engine, text
 
 from .publish import serving_url
-from .exhaustion import build_watch, ledger_rows
+from .exhaustion import build_moderate_momentum_cohorts, build_watch, ledger_rows
 
 
 def _clean(o):
@@ -74,9 +74,10 @@ def _ensure_signal_tables(engine) -> None:
 def _record_signal_observations(engine, rows: list[dict]) -> int:
     """Idempotently persist research observations; never create trade claims."""
     _ensure_signal_tables(engine)
+    inserted = 0
     with engine.begin() as conn:
         for row in rows:
-            conn.execute(text("""
+            result = conn.execute(text("""
                 INSERT INTO signal_observations
                 (signal_id, signal_version, as_of_timestamp, signal_date, ticker,
                  state, classification, features_json, source_quality, data_cutoff, created_at)
@@ -84,7 +85,8 @@ def _record_signal_observations(engine, rows: list[dict]) -> int:
                         :state, :classification, :features_json, :source_quality, :data_cutoff, :created_at)
                 ON CONFLICT (signal_id) DO NOTHING
             """), row)
-    return len(rows)
+            inserted += max(0, int(result.rowcount or 0))
+    return inserted
 
 
 def _capture_signal_intraday_bars(engine, rows: list[dict], now: str) -> int:
@@ -97,22 +99,25 @@ def _capture_signal_intraday_bars(engine, rows: list[dict], now: str) -> int:
     if not rows:
         return 0
     _ensure_signal_tables(engine)
-    ids = {row["ticker"]: row["signal_id"] for row in rows}
-    data = yf.download([f"{ticker}.IS" for ticker in ids], period="1d", interval="5m",
+    ids_by_ticker: dict[str, list[str]] = {}
+    for row in rows:
+        ids_by_ticker.setdefault(row["ticker"], []).append(row["signal_id"])
+    data = yf.download([f"{ticker}.IS" for ticker in ids_by_ticker], period="1d", interval="5m",
                        group_by="ticker", auto_adjust=True, progress=False, threads=True)
     bars = []
-    for ticker, signal_id in ids.items():
+    for ticker, signal_ids in ids_by_ticker.items():
         try:
             frame = data[f"{ticker}.IS"].dropna(how="all")
         except KeyError:
             continue
-        for timestamp, bar in frame.iterrows():
-            bars.append({"signal_id": signal_id, "ticker": ticker,
-                         "bar_timestamp": str(timestamp), "open": float(bar["Open"]),
-                         "high": float(bar["High"]), "low": float(bar["Low"]),
-                         "close": float(bar["Close"]), "volume": float(bar["Volume"]),
-                         "provider": "Yahoo Finance", "price_basis": "adjusted",
-                         "retrieved_at": now})
+        for signal_id in signal_ids:
+            for timestamp, bar in frame.iterrows():
+                bars.append({"signal_id": signal_id, "ticker": ticker,
+                             "bar_timestamp": str(timestamp), "open": float(bar["Open"]),
+                             "high": float(bar["High"]), "low": float(bar["Low"]),
+                             "close": float(bar["Close"]), "volume": float(bar["Volume"]),
+                             "provider": "Yahoo Finance", "price_basis": "adjusted",
+                             "retrieved_at": now})
     if bars:
         with engine.begin() as conn:
             conn.execute(text("""
@@ -158,7 +163,7 @@ def refresh(batch: int = 200) -> dict:
             conn, params={"cutoff": cutoff}).set_index("ticker")
         history_cutoff = (date.fromisoformat(max_date) - timedelta(days=60)).isoformat()
         history = pd.read_sql_query(
-            text("SELECT p.ticker, p.date, p.close, p.volume, s.title "
+            text("SELECT p.ticker, p.date, p.open, p.high, p.low, p.close, p.volume, s.title "
                  "FROM stock_prices p LEFT JOIN stocks s ON s.ticker=p.ticker "
                  "WHERE p.date >= :cutoff ORDER BY p.ticker, p.date"),
             conn, params={"cutoff": history_cutoff})
@@ -187,9 +192,10 @@ def refresh(batch: int = 200) -> dict:
     live["turnover_mn"] = live["price"] * live["volume"] / 1e6
     live["vol_vs_20d"] = live["volume"] / live["avg_vol"]
     exhaustion_watch = build_watch(history, live)
-    signal_rows = ledger_rows(exhaustion_watch, now)
+    moderate_cohorts = build_moderate_momentum_cohorts(history, live)
+    signal_rows = ledger_rows(exhaustion_watch + moderate_cohorts, now)
     recorded_signals = _record_signal_observations(engine, signal_rows)
-    captured_bars = _capture_signal_intraday_bars(engine, signal_rows, now)
+    refreshed_bars = _capture_signal_intraday_bars(engine, signal_rows, now)
     liquid = live[live["turnover_mn"] >= 10]
 
     breadth = {
@@ -239,6 +245,17 @@ def refresh(batch: int = 200) -> dict:
                     "gap_calculation_timestamp": now,
                     "source_note": "Yahoo adjusted daily-bar open, delayed/revisable; no auction queue, spread, or fill data.",
                     "candidates": exhaustion_watch,
+                },
+                "signal_collection": {
+                    "state": "prospective collection",
+                    "cohorts": {
+                        "exhaustion": len(exhaustion_watch),
+                        "moderate_4_7_normal_turnover": sum(
+                            r["cohort"] == "moderate_4_7_normal_turnover" for r in moderate_cohorts),
+                        "moderate_7_9_normal_turnover": sum(
+                            r["cohort"] == "moderate_7_9_normal_turnover" for r in moderate_cohorts),
+                    },
+                    "note": "Research collection only; no cohort is a buy, sell, or short signal.",
                 }}),
         ensure_ascii=False, allow_nan=False, default=str)
 
@@ -250,8 +267,8 @@ def refresh(batch: int = 200) -> dict:
             {"v": payload, "t": datetime.utcnow().isoformat(
                 timespec="seconds")})
     engine.dispose()
-    return {"ts": now, "quotes": len(quotes), "recorded_signals": recorded_signals,
-            "captured_intraday_bars": captured_bars,
+    return {"ts": now, "quotes": len(quotes), "new_signal_observations": recorded_signals,
+            "refreshed_intraday_bars": refreshed_bars,
             **breadth}
 
 

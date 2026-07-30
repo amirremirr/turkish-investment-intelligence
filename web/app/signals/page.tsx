@@ -19,6 +19,12 @@ export const metadata = {
 const REPO =
   "https://github.com/amirremirr/turkish-investment-intelligence/blob/main/docs";
 
+const COHORT_LABELS: Record<string, string> = {
+  "exhaustion-v1": "Crowded exhaustion (risk context)",
+  "moderate-4-7-normal-turnover-v1": "Moderate 4-7% / ordinary turnover",
+  "moderate-7-9-normal-turnover-v1": "Moderate 7-9% / ordinary turnover",
+};
+
 function dateRange(first: string | null, last: string | null) {
   if (!first || !last) return "No qualifying observations yet";
   return first === last ? first : `${first} to ${last}`;
@@ -38,34 +44,45 @@ function CaptureStatus({ data }: { data: SignalLabStatus | null }) {
   }
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="space-y-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Card>
+          <Stat label="Recorded observations" value={num(data.observations, 0)} sub="one defined event per stock, date and version" />
+        </Card>
+        <Card>
+          <Stat label="Event days" value={num(data.eventDays, 0)} sub={dateRange(data.firstSignalDate, data.lastSignalDate)} />
+        </Card>
+        <Card>
+          <Stat label="5-minute bars captured" value={num(data.intradayBars, 0)} sub="raw prospective path records" />
+        </Card>
+        <Card>
+          <Stat label="Events with bars" value={num(data.signalsWithBars, 0)} sub={data.lastBarAt ? `latest: ${data.lastBarAt}` : "no bars captured yet"} />
+        </Card>
+      </div>
       <Card>
-        <Stat
-          label="Recorded observations"
-          value={num(data.observations, 0)}
-          sub="one defined event per stock, date and version"
-        />
-      </Card>
-      <Card>
-        <Stat
-          label="Event days"
-          value={num(data.eventDays, 0)}
-          sub={dateRange(data.firstSignalDate, data.lastSignalDate)}
-        />
-      </Card>
-      <Card>
-        <Stat
-          label="5-minute bars captured"
-          value={num(data.intradayBars, 0)}
-          sub="raw prospective path records"
-        />
-      </Card>
-      <Card>
-        <Stat
-          label="Events with bars"
-          value={num(data.signalsWithBars, 0)}
-          sub={data.lastBarAt ? `latest: ${data.lastBarAt}` : "no bars captured yet"}
-        />
+        <SectionTitle hint="each cohort is fixed before its future outcomes are read">Collection by cohort</SectionTitle>
+        {data.cohorts.length === 0 ? (
+          <p className="text-sm text-muted">No cohort observations are stored yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr className="border-b text-left text-muted">
+                <th className="py-2 font-medium">Cohort</th><th className="py-2 text-right font-medium">Events</th>
+                <th className="py-2 text-right font-medium">Days</th><th className="py-2 text-right font-medium">With bars</th>
+                <th className="py-2 text-right font-medium">5-minute bars</th>
+              </tr></thead>
+              <tbody>{data.cohorts.map((cohort) => (
+                <tr key={cohort.signalVersion} className="border-b last:border-0">
+                  <td className="py-2">{COHORT_LABELS[cohort.signalVersion] ?? cohort.signalVersion}</td>
+                  <td className="tnum py-2 text-right">{num(cohort.observations, 0)}</td>
+                  <td className="tnum py-2 text-right">{num(cohort.eventDays, 0)}</td>
+                  <td className="tnum py-2 text-right">{num(cohort.signalsWithBars, 0)}</td>
+                  <td className="tnum py-2 text-right">{num(cohort.intradayBars, 0)}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
       </Card>
     </div>
   );

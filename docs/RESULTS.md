@@ -120,7 +120,9 @@ After the first rule failed, the project also examined more moderate daily
 moves with ordinary turnover. The 4-7% group was negative on average. The
 7-9% group had a positive raw mean in one sample, but its median was negative
 and a small number of outsized days drove the average; the later sample was
-negative.
+negative. Both legs are now collected prospectively as fixed cohorts alongside
+the exhaustion group, so their future outcomes can be compared without
+changing the rule again.
 
 **What this means:** this does not rescue the original strategy and is not a
 buy rule. The scenarios are frozen for future prospective observation rather

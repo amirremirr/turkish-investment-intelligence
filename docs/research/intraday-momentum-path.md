@@ -7,8 +7,15 @@ is implied.
 
 ## Data contract
 
-For each `exhaustion-v1` observation, retain adjusted Yahoo values on a single
-price basis:
+For every observation in the fixed prospective cohorts, retain adjusted Yahoo
+values on a single price basis. The cohorts are: (1) crowded exhaustion:
+previous-day gain at least 7%, turnover at least 2x normal and next-open gap at
+least 1%; (2) moderate 4-7% gain with ordinary 0.5-1.0x turnover; and (3)
+moderate 7-9% gain with ordinary 0.5-1.0x turnover. The two moderate cohorts
+also require at least TRY 10m prior-20-session median turnover, close strength
+at least 0.60 and no more than one preceding up day.
+
+Each record retains:
 
 - yesterday's official adjusted close and final adjusted turnover;
 - prior-20-session **median trading value**, excluding the event day;
@@ -22,7 +29,7 @@ is a source-quality outcome, never silently replaced with a later quote.
 
 ## Frozen first questions
 
-For exhaustion observations, measure:
+For each cohort, measure:
 
 | Window | Outcome |
 |---|---|
@@ -32,6 +39,10 @@ For exhaustion observations, measure:
 | open → 60m | morning path |
 | open → close | daily benchmark |
 | 15m/30m → close | delayed-reversal path |
+
+The 7-9% ordinary-turnover group is included because it had a positive raw
+historical mean, but a negative median and negative later sample. It is an
+explicit replication attempt, not a positive finding.
 
 For a future positive hypothesis, test only after sufficient observations:
 
