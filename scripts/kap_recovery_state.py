@@ -49,15 +49,6 @@ def _quote(identifier: str) -> str:
     return '"' + identifier.replace('"', '""') + '"'
 
 
-def _table_exists(conn: sqlite3.Connection, schema: str, table: str) -> bool:
-    return bool(conn.execute(
-        # SQLite accepts a quoted schema for PRAGMA, but not reliably for the
-        # ``schema.sqlite_master`` form.  Both values are internal constants.
-        f"SELECT 1 FROM {schema}.sqlite_master "
-        "WHERE type='table' AND name=?", (table,)
-    ).fetchone())
-
-
 def _columns(conn: sqlite3.Connection, schema: str, table: str) -> list[str]:
     return [str(row[1]) for row in conn.execute(
         f"PRAGMA {_quote(schema)}.table_info({_quote(table)})"
@@ -116,6 +107,23 @@ def import_state(database: Path, state_file: Path) -> None:
         print("No KAP recovery checkpoint to restore.")
         return
 
+    # Read the small sidecar directly first.  Querying ``sqlite_master``
+    # through an attached schema behaves differently across SQLite builds,
+    # whereas its own main schema is stable on the hosted runner and locally.
+    checkpoint = sqlite3.connect(state_file)
+    try:
+        checkpoint_tables = {
+            str(row[0]) for row in checkpoint.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        checkpoint_columns = {
+            table: _columns(checkpoint, "main", table)
+            for table in STATE_TABLES if table in checkpoint_tables
+        }
+    finally:
+        checkpoint.close()
+
     destination = sqlite3.connect(database)
     try:
         kap._ensure_schema(destination)
@@ -123,9 +131,9 @@ def import_state(database: Path, state_file: Path) -> None:
         try:
             destination.execute("BEGIN")
             for table in STATE_TABLES:
-                if not _table_exists(destination, "kap_checkpoint", table):
+                if table not in checkpoint_columns:
                     continue
-                source_columns = set(_columns(destination, "kap_checkpoint", table))
+                source_columns = set(checkpoint_columns[table])
                 columns = [column for column in _columns(destination, "main", table)
                            if column in source_columns]
                 if not columns:
