@@ -107,9 +107,10 @@ def import_state(database: Path, state_file: Path) -> None:
         print("No KAP recovery checkpoint to restore.")
         return
 
-    # Read the small sidecar directly first.  Querying ``sqlite_master``
-    # through an attached schema behaves differently across SQLite builds,
-    # whereas its own main schema is stable on the hosted runner and locally.
+    # The checkpoint is small (ledgers and monthly snapshots, not the complete
+    # analytics database). Keep it as a normal second connection rather than
+    # using SQLite ATTACH: attached-schema queries have differed between the
+    # Windows and hosted-runner SQLite builds.
     checkpoint = sqlite3.connect(state_file)
     try:
         checkpoint_tables = {
@@ -117,23 +118,14 @@ def import_state(database: Path, state_file: Path) -> None:
                 "SELECT name FROM sqlite_master WHERE type='table'"
             )
         }
-        checkpoint_columns = {
-            table: _columns(checkpoint, "main", table)
-            for table in STATE_TABLES if table in checkpoint_tables
-        }
-    finally:
-        checkpoint.close()
-
-    destination = sqlite3.connect(database)
-    try:
-        kap._ensure_schema(destination)
-        destination.execute("ATTACH DATABASE ? AS kap_checkpoint", (str(state_file),))
+        destination = sqlite3.connect(database)
         try:
+            kap._ensure_schema(destination)
             destination.execute("BEGIN")
             for table in STATE_TABLES:
-                if table not in checkpoint_columns:
+                if table not in checkpoint_tables:
                     continue
-                source_columns = set(checkpoint_columns[table])
+                source_columns = set(_columns(checkpoint, "main", table))
                 columns = [column for column in _columns(destination, "main", table)
                            if column in source_columns]
                 if not columns:
@@ -141,16 +133,21 @@ def import_state(database: Path, state_file: Path) -> None:
                 quoted = ", ".join(_quote(column) for column in columns)
                 if table in REPLACE_TABLES:
                     destination.execute(f"DELETE FROM main.{_quote(table)}")
-                destination.execute(
-                    f"INSERT OR REPLACE INTO main.{_quote(table)} ({quoted}) "
-                    f"SELECT {quoted} FROM kap_checkpoint.{_quote(table)}"
-                )
+                rows = checkpoint.execute(
+                    f"SELECT {quoted} FROM main.{_quote(table)}"
+                ).fetchall()
+                if rows:
+                    placeholders = ", ".join("?" for _ in columns)
+                    destination.executemany(
+                        f"INSERT OR REPLACE INTO main.{_quote(table)} ({quoted}) "
+                        f"VALUES ({placeholders})", rows
+                    )
             destination.commit()
             print(f"KAP recovery checkpoint restored: {_summary(destination)}")
         finally:
-            destination.execute("DETACH DATABASE kap_checkpoint")
+            destination.close()
     finally:
-        destination.close()
+        checkpoint.close()
 
 
 def main() -> None:
