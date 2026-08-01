@@ -90,10 +90,15 @@ def export_state(database: Path, state_file: Path) -> None:
             destination.execute(str(row[0]))
             cols = _columns(source, "main", table)
             quoted = ", ".join(_quote(col) for col in cols)
-            destination.execute(
-                f"INSERT INTO {_quote(table)} ({quoted}) "
+            rows = source.execute(
                 f"SELECT {quoted} FROM main.{_quote(table)}"
-            )
+            ).fetchall()
+            if rows:
+                placeholders = ", ".join("?" for _ in cols)
+                destination.executemany(
+                    f"INSERT INTO {_quote(table)} ({quoted}) VALUES ({placeholders})",
+                    rows,
+                )
         destination.commit()
         print(f"KAP recovery checkpoint exported: {_summary(source)}")
     finally:
