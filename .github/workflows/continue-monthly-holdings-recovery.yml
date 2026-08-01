@@ -7,6 +7,21 @@ on:
   workflow_run:
     workflows: ["Monthly holdings recovery"]
     types: [completed]
+  workflow_dispatch:
+    inputs:
+      recovery_run_id:
+        description: "Recovery workflow run ID that owns the saved checkpoint"
+        required: true
+        # This is the retained checkpoint behind the interrupted July recovery.
+        # New manual resumes should use the run ID printed by the prior
+        # continuation run, not this historical default.
+        default: "30437505783"
+      checkpoint:
+        description: "Checkpoint stage to resume"
+        required: true
+        type: choice
+        default: "extended-pass-2"
+        options: ["pass-2", "extended-pass-1", "extended-pass-2"]
 
 permissions:
   contents: read
@@ -21,11 +36,16 @@ env:
   SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
   REQUIRE_SUPABASE_PUBLISH: "true"
   PYTHONIOENCODING: utf-8
+  RECOVERY_RUN_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.recovery_run_id || github.event.workflow_run.id }}
+  RECOVERY_CHECKPOINT: ${{ github.event_name == 'workflow_dispatch' && inputs.checkpoint || 'pass-2' }}
+  RECOVERY_OUTPUT_ID: ${{ github.run_id }}
 
 jobs:
   gate:
     name: Verify validation found reports
-    if: github.event.workflow_run.conclusion == 'success'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     outputs:
       proceed: ${{ steps.coverage.outputs.proceed }}
@@ -42,7 +62,15 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: data/funds.db
-          key: funds-db-${{ github.event.workflow_run.id }}-pass-2
+          key: funds-db-${{ env.RECOVERY_RUN_ID }}-${{ env.RECOVERY_CHECKPOINT }}
+      - name: Restore durable KAP recovery checkpoint
+        uses: actions/cache/restore@v4
+        with:
+          path: data/kap-recovery-state.db
+          key: kap-recovery-${{ env.RECOVERY_RUN_ID }}-${{ env.RECOVERY_CHECKPOINT }}
+          restore-keys: kap-recovery-
+      - name: Merge KAP recovery checkpoint
+        run: python scripts/kap_recovery_state.py import
       - name: Require restored database and serving credential
         run: |
           test -f data/funds.db || { echo "::error::validation database was not saved"; exit 1; }
@@ -105,7 +133,15 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: data/funds.db
-          key: funds-db-${{ github.event.workflow_run.id }}-pass-2
+          key: funds-db-${{ env.RECOVERY_RUN_ID }}-${{ env.RECOVERY_CHECKPOINT }}
+      - name: Restore durable KAP recovery checkpoint
+        uses: actions/cache/restore@v4
+        with:
+          path: data/kap-recovery-state.db
+          key: kap-recovery-${{ env.RECOVERY_RUN_ID }}-${{ env.RECOVERY_CHECKPOINT }}
+          restore-keys: kap-recovery-
+      - name: Merge KAP recovery checkpoint
+        run: python scripts/kap_recovery_state.py import
       - name: Continue four paced recovery cycles
         run: |
           test -f data/funds.db || { echo "::error::validation database was not saved"; exit 1; }
@@ -117,7 +153,16 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: data/funds.db
-          key: funds-db-${{ github.event.workflow_run.id }}-extended-pass-1
+          key: funds-db-${{ env.RECOVERY_OUTPUT_ID }}-extended-pass-1
+      - name: Save KAP recovery checkpoint for final pass
+        if: always()
+        run: python scripts/kap_recovery_state.py export
+      - name: Cache KAP recovery checkpoint for final pass
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/kap-recovery-state.db
+          key: kap-recovery-${{ env.RECOVERY_OUTPUT_ID }}-extended-pass-1
 
   second-extended-pass:
     name: Extended recovery pass 2 of 2
@@ -135,7 +180,14 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: data/funds.db
-          key: funds-db-${{ github.event.workflow_run.id }}-extended-pass-1
+          key: funds-db-${{ env.RECOVERY_OUTPUT_ID }}-extended-pass-1
+      - name: Restore KAP recovery checkpoint from extended pass 1
+        uses: actions/cache/restore@v4
+        with:
+          path: data/kap-recovery-state.db
+          key: kap-recovery-${{ env.RECOVERY_OUTPUT_ID }}-extended-pass-1
+      - name: Merge KAP recovery checkpoint
+        run: python scripts/kap_recovery_state.py import
       - name: Continue four paced recovery cycles
         run: |
           test -f data/funds.db || { echo "::error::extended recovery database was not saved"; exit 1; }
@@ -147,4 +199,13 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: data/funds.db
-          key: funds-db-${{ github.event.workflow_run.id }}-extended-pass-2
+          key: funds-db-${{ env.RECOVERY_OUTPUT_ID }}-extended-pass-2
+      - name: Save final KAP recovery checkpoint
+        if: always()
+        run: python scripts/kap_recovery_state.py export
+      - name: Cache final KAP recovery checkpoint
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/kap-recovery-state.db
+          key: kap-recovery-${{ env.RECOVERY_OUTPUT_ID }}-extended-pass-2

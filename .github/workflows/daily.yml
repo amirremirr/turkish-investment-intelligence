@@ -67,6 +67,23 @@ jobs:
           key: funds-db-${{ github.run_id }}
           restore-keys: funds-db-
 
+      # The generic database cache can be newer while carrying an older MKK
+      # cursor. Restore the dedicated ledger afterwards so an ordinary daily
+      # run can never roll a long holdings recovery backwards.
+      - name: Restore KAP recovery checkpoint
+        if: github.event.inputs.mode != 'bootstrap'
+        uses: actions/cache/restore@v4
+        with:
+          path: data/kap-recovery-state.db
+          key: kap-recovery-${{ github.run_id }}
+          restore-keys: kap-recovery-
+
+      - name: Merge KAP recovery checkpoint
+        if: github.event.inputs.mode != 'bootstrap'
+        run: |
+          test -f data/funds.db || exit 0
+          python scripts/kap_recovery_state.py import
+
       - name: Bootstrap (full rebuild)
         if: github.event.inputs.mode == 'bootstrap'
         run: |
@@ -155,6 +172,19 @@ jobs:
         with:
           path: data/funds.db
           key: funds-db-${{ github.run_id }}
+
+      - name: Save KAP recovery checkpoint
+        if: always()
+        run: |
+          test -f data/funds.db || exit 0
+          python scripts/kap_recovery_state.py export
+
+      - name: Cache KAP recovery checkpoint
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/kap-recovery-state.db
+          key: kap-recovery-${{ github.run_id }}
 
       - name: Compress DB for backup artifact
         if: always()

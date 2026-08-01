@@ -48,6 +48,14 @@ jobs:
           path: data/funds.db
           key: funds-db-${{ github.run_id }}-pass-1
           restore-keys: funds-db-
+      - name: Restore KAP recovery checkpoint
+        uses: actions/cache/restore@v4
+        with:
+          path: data/kap-recovery-state.db
+          key: kap-recovery-${{ github.run_id }}-pass-1
+          restore-keys: kap-recovery-
+      - name: Merge KAP recovery checkpoint
+        run: python scripts/kap_recovery_state.py import
       - name: Require serving and MKK credentials
         run: |
           test -n "$SUPABASE_DB_URL" || { echo "::error::SUPABASE_DB_URL is required"; exit 1; }
@@ -67,6 +75,15 @@ jobs:
         with:
           path: data/funds.db
           key: funds-db-${{ github.run_id }}-pass-1
+      - name: Save KAP recovery checkpoint for pass 2
+        if: always()
+        run: python scripts/kap_recovery_state.py export
+      - name: Cache KAP recovery checkpoint for pass 2
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/kap-recovery-state.db
+          key: kap-recovery-${{ github.run_id }}-pass-1
 
   second-pass:
     name: Recovery pass 2 of 2
@@ -86,6 +103,13 @@ jobs:
           path: data/funds.db
           key: funds-db-${{ github.run_id }}-pass-1
           restore-keys: funds-db-
+      - name: Restore KAP recovery checkpoint from pass 1
+        uses: actions/cache/restore@v4
+        with:
+          path: data/kap-recovery-state.db
+          key: kap-recovery-${{ github.run_id }}-pass-1
+      - name: Merge KAP recovery checkpoint
+        run: python scripts/kap_recovery_state.py import
       - name: Require serving and MKK credentials
         run: |
           test -n "$SUPABASE_DB_URL" || { echo "::error::SUPABASE_DB_URL is required"; exit 1; }
@@ -103,3 +127,12 @@ jobs:
         with:
           path: data/funds.db
           key: funds-db-${{ github.run_id }}-pass-2
+      - name: Save final KAP recovery checkpoint
+        if: always()
+        run: python scripts/kap_recovery_state.py export
+      - name: Cache final KAP recovery checkpoint
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/kap-recovery-state.db
+          key: kap-recovery-${{ github.run_id }}-pass-2

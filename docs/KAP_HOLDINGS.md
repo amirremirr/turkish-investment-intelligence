@@ -31,7 +31,7 @@ six-calls-per-minute product limit. Its disclosure index is stored separately
 from public KAP notification IDs; those identifiers must never be assumed
 interchangeable.
 
-### Current operating status (30 July 2026)
+### Current operating status (1 August 2026)
 
 The public KAP site contains June 2026 portfolio reports (for example, FPH
 and PPH were published on 2 July), but the initial MKK recovery runs found no
@@ -42,10 +42,12 @@ reports before generic fund notices. It also recognises both normal Turkish
 text and the occasional incorrectly decoded text returned by the development
 gateway.
 
-This change is intentionally awaiting the next permitted run before any June
-coverage figure is claimed. Until then, the data-status page's June `unseen`
-state means **not yet collected**, not "the fund has no holdings" or "the fund
-did not publish".
+The first corrected daily run still did not reach the early-July filing wave:
+June coverage is therefore still **0 / 2,065**, and `unseen` means **not yet
+collected**, not "the fund has no holdings" or "the fund did not publish". A
+previous recovery advanced more than 22,000 MKK notices before an upstream 500;
+its cursor is now checkpointed independently of the normal database cache, so
+an unrelated daily run cannot roll that progress back.
 
 The MKK detail record supplies the fund code, subject, reporting period,
 publication time and attachment references. The attachment remains the source
