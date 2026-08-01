@@ -35,6 +35,13 @@ const FINDINGS = [
   },
 ];
 
+const RESEARCH_NOTE_URLS = [
+  "https://github.com/amirremirr/turkish-investment-intelligence/blob/main/docs/research/01-contrarian-flows.md",
+  "https://github.com/amirremirr/turkish-investment-intelligence/blob/main/docs/research/02-performance-chasing.md",
+  "https://github.com/amirremirr/turkish-investment-intelligence/blob/main/docs/research/03-closet-indexing.md",
+  "https://github.com/amirremirr/turkish-investment-intelligence/blob/main/docs/research/04-nav-timing-lag.md",
+];
+
 export default async function Home() {
   const [status, agg] = await Promise.all([
     getStatus().catch((): StatusMap => ({})),
@@ -75,6 +82,29 @@ export default async function Home() {
             className="rounded-lg border px-4 py-2.5 text-sm font-medium hover:border-accent"
           >
             Read the research
+          </Link>
+        </div>
+      </section>
+
+      <section aria-labelledby="start-here">
+        <h2 id="start-here" className="text-sm font-semibold uppercase tracking-wide text-muted">
+          Start here
+        </h2>
+        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          <Link href="/funds" className="rounded-xl border bg-surface p-4 transition-colors hover:border-accent">
+            <div className="text-xs font-medium text-accent">01 · Compare</div>
+            <div className="mt-1 font-semibold">Screen funds</div>
+            <p className="mt-1 text-sm text-muted">Filter and compare funds within the same category.</p>
+          </Link>
+          <Link href="/stocks" className="rounded-xl border bg-surface p-4 transition-colors hover:border-accent">
+            <div className="text-xs font-medium text-accent">02 · Inspect</div>
+            <div className="mt-1 font-semibold">Open disclosed holdings</div>
+            <p className="mt-1 text-sm text-muted">See the funds and BIST stocks with a parsed KAP portfolio book.</p>
+          </Link>
+          <Link href="/status" className="rounded-xl border bg-surface p-4 transition-colors hover:border-accent">
+            <div className="text-xs font-medium text-accent">03 · Verify</div>
+            <div className="mt-1 font-semibold">Check the data status</div>
+            <p className="mt-1 text-sm text-muted">Confirm coverage and freshness before relying on any result.</p>
           </Link>
         </div>
       </section>
@@ -177,13 +207,22 @@ export default async function Home() {
           of manager skill.
         </p>
         <div className="grid gap-4 sm:grid-cols-2">
-          {FINDINGS.map((f) => (
-            <Link key={f.t} href="/research">
+          {FINDINGS.map((f, index) => (
+            <a
+              key={f.t}
+              href={RESEARCH_NOTE_URLS[index]}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={`Read the full research note: ${f.t}`}
+            >
               <Card className="h-full transition-colors hover:border-accent">
                 <div className="font-semibold">{f.t}</div>
                 <p className="mt-1.5 text-sm text-muted">{f.d}</p>
+                <span className="mt-3 inline-block text-xs font-medium text-accent">
+                  Read the note â†—
+                </span>
               </Card>
-            </Link>
+            </a>
           ))}
         </div>
       </section>

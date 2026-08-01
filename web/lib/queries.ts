@@ -583,6 +583,75 @@ export async function getStatus(): Promise<StatusMap> {
   return out;
 }
 
+export type SearchResult = {
+  kind: "fund" | "stock";
+  code: string;
+  title: string | null;
+  detail: string | null;
+  href: string;
+};
+
+// Small, server-side discovery index for the global command palette. The
+// browser receives only display metadata and routes, never serving-table rows
+// or holdings data. Keep the threshold here as well as in the route so an
+// accidental caller cannot turn short queries into broad table scans.
+export async function getSearchResults(query: string): Promise<SearchResult[]> {
+  const term = query.trim().replace(/\s+/g, " ");
+  if (term.length < 2 || term.length > 80) return [];
+
+  const contains = `%${term}%`;
+  const starts = `${term}%`;
+  const [funds, stocks] = await Promise.all([
+    sql`
+      SELECT code, title, category
+      FROM dash_quality
+      WHERE code ILIKE ${contains} OR title ILIKE ${contains}
+      ORDER BY CASE
+        WHEN code ILIKE ${starts} THEN 0
+        WHEN title ILIKE ${starts} THEN 1
+        ELSE 2
+      END, code
+      LIMIT 6`,
+    sql`
+      SELECT ticker, title, sector
+      FROM stocks
+      WHERE ticker ILIKE ${contains} OR title ILIKE ${contains}
+      ORDER BY CASE
+        WHEN ticker ILIKE ${starts} THEN 0
+        WHEN title ILIKE ${starts} THEN 1
+        ELSE 2
+      END, ticker
+      LIMIT 6`,
+  ]);
+
+  const lower = term.toLocaleLowerCase("tr-TR");
+  const rank = (code: string, title: string | null) => {
+    const symbol = code.toLocaleLowerCase("tr-TR");
+    const name = (title ?? "").toLocaleLowerCase("tr-TR");
+    return symbol.startsWith(lower) ? 0 : name.startsWith(lower) ? 1 : 2;
+  };
+  const results: SearchResult[] = [
+    ...funds.map((row) => ({
+      kind: "fund" as const,
+      code: row.code as string,
+      title: (row.title as string | null) ?? null,
+      detail: (row.category as string | null) ?? null,
+      href: `/funds/${row.code as string}`,
+    })),
+    ...stocks.map((row) => ({
+      kind: "stock" as const,
+      code: row.ticker as string,
+      title: (row.title as string | null) ?? null,
+      detail: (row.sector as string | null) ?? null,
+      href: `/stocks/${row.ticker as string}`,
+    })),
+  ];
+
+  return results
+    .sort((a, b) => rank(a.code, a.title) - rank(b.code, b.title) || a.code.localeCompare(b.code))
+    .slice(0, 12);
+}
+
 export type SignalLabStatus = {
   observations: number;
   eventDays: number;

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
+import { SearchPalette } from "@/components/search-palette";
 import { Button } from "@/components/ui";
 
 const LINKS = [
@@ -18,6 +19,7 @@ const LINKS = [
 export function Nav() {
   const path = usePathname();
   const [open, setOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const active = (href: string) =>
     href === "/" ? path === "/" : path.startsWith(href);
 
@@ -49,11 +51,20 @@ export function Nav() {
         <nav aria-label="Primary navigation" className="hidden items-center gap-1 text-sm md:flex">
           {LINKS.map((link) => navLink(link))}
         </nav>
+        <Button
+          variant="ghost"
+          className="ml-auto hidden gap-2 md:inline-flex"
+          aria-haspopup="dialog"
+          aria-label="Search funds and stocks"
+          onClick={() => setSearchOpen(true)}
+        >
+          Search <kbd className="rounded border px-1 text-[10px]">Ctrl K</kbd>
+        </Button>
         <a
           href="https://github.com/amirremirr/turkish-investment-intelligence"
           target="_blank"
           rel="noreferrer"
-          className="ml-auto hidden text-sm text-muted hover:text-fg md:inline"
+          className="hidden text-sm text-muted hover:text-fg md:inline"
         >
           GitHub ↗
         </a>
@@ -71,6 +82,17 @@ export function Nav() {
       {open && (
         <div id="mobile-navigation" className="border-t bg-surface px-5 py-3 md:hidden">
           <nav aria-label="Mobile navigation" className="mx-auto grid max-w-6xl gap-1">
+            <Button
+              variant="secondary"
+              className="mb-2 justify-start"
+              aria-haspopup="dialog"
+              onClick={() => {
+                setOpen(false);
+                setSearchOpen(true);
+              }}
+            >
+              Search funds and stocks
+            </Button>
             {LINKS.map((link) => navLink(link, true))}
             <a
               href="https://github.com/amirremirr/turkish-investment-intelligence"
@@ -83,6 +105,7 @@ export function Nav() {
           </nav>
         </div>
       )}
+      <SearchPalette open={searchOpen} onOpenChange={setSearchOpen} />
     </header>
   );
 }

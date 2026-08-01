@@ -597,15 +597,31 @@ def _mkk_is_portfolio_report(summary: dict, detail: dict) -> bool:
     ])
     # ``NFKD`` removes accents such as ö, but Turkish dotless i does not
     # decompose. Unicode escapes keep this independent of source encoding.
-    normalized = unicodedata.normalize("NFKD", text.casefold().translate(str.maketrans({
-        "\u0131": "i", "\u015f": "s", "\u011f": "g", "\u00e7": "c",
-        "\u00fc": "u", "\u00f6": "o",
-    })))
-    normalized = "".join(ch for ch in normalized if ch.isascii())
-    return any(token in normalized for token in (
+    # MKK's development gateway has returned both correctly decoded Turkish
+    # and UTF-8 text that was decoded as latin-1 (``PortfÃ¶y``).  Search both
+    # representations: otherwise a valid report can be discarded before its
+    # attachment is ever inspected.
+    variants = [text]
+    try:
+        repaired = text.encode("latin-1").decode("utf-8")
+    except UnicodeError:
+        repaired = text
+    if repaired != text:
+        variants.append(repaired)
+
+    tokens = (
         "portfoy dagilim raporu", "portfolio distribution report",
         "portfolio distribution",
-    ))
+    )
+    for variant in variants:
+        normalized = unicodedata.normalize("NFKD", variant.casefold().translate(str.maketrans({
+            "\u0131": "i", "\u015f": "s", "\u011f": "g", "\u00e7": "c",
+            "\u00fc": "u", "\u00f6": "o",
+        })))
+        normalized = "".join(ch for ch in normalized if ch.isascii())
+        if any(token in normalized for token in tokens):
+            return True
+    return False
 def sync_mkk_funds(conn: sqlite3.Connection, client: mkk.MKKClient | None = None,
                    force: bool = False) -> dict:
     """Checkpoint the official MKK fund registry without changing TEFAS data."""
@@ -943,12 +959,30 @@ def discover_mkk_monthly(conn: sqlite3.Connection, period: str, batches: int = 5
     # Inspect only TEFAS funds, then retain reports from other months as
     # deferred evidence rather than spending the current-month parser budget
     # on them. The reporting period comes from the official detail response.
-    candidates = conn.execute(
+    # The list endpoint already gives us each disclosure title.  Use it to
+    # prioritise explicit Portfolio Distribution Reports before spending the
+    # six-calls-per-minute detail quota on generic fund notices.  The prior
+    # approach inspected the most recent arbitrary notices first, so a full
+    # monthly wave could produce zero recognised reports despite the reports
+    # being present in the stored batch metadata.
+    candidate_rows = conn.execute(
         "SELECT m.disclosure_index, m.fund_code, m.title, m.sub_report_ids "
         "FROM mkk_disclosures m JOIN funds f ON f.code=m.fund_code "
         "WHERE m.status='indexed' AND m.disclosure_index <= ? "
-        "ORDER BY m.disclosure_index DESC LIMIT ?", (head_index, detail_limit),
+        "ORDER BY m.disclosure_index DESC LIMIT ?",
+        (head_index, max(1000, detail_limit * 100)),
     ).fetchall()
+    priority = []
+    fallback = []
+    for row in candidate_rows:
+        _, _, title, sub_report_ids = row
+        summary = {"title": title, "subReportIds": json.loads(sub_report_ids or "[]")}
+        (priority if _mkk_is_portfolio_report(summary, {}) else fallback).append(row)
+    # Keep a bounded fallback lane for schemas where the list title is blank
+    # or generic.  When explicit candidates exist, do not dilute the scarce
+    # detail budget with unrelated notices.
+    candidates = (priority[:detail_limit] if priority
+                  else fallback[:detail_limit])
     inspected = found = deferred = ignored = errors = 0
     for did, code, title, sub_report_ids in candidates:
         try:

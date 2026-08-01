@@ -22,13 +22,30 @@ production ([tefaslab/kap.py](../tefaslab/kap.py)).*
 
 ## Official MKK discovery
 
-The official MKK API is now the production discovery route for monthly
-holdings. It stores a separate backward cursor for each portfolio month and
-walks from the current MKK head through older 50-notice pages, so a filing wave
-cannot be reduced to its newest 50 notices. Calls are spaced 10.5 seconds
-apart to stay inside the six-calls-per-minute product limit. Its disclosure
-index is stored separately from public KAP notification IDs; those identifiers
-must never be assumed interchangeable.
+The official MKK API is the primary monthly discovery route, with the public
+KAP pages retained as an independent fallback. It stores a separate backward
+cursor for each portfolio month and walks from the current MKK head through
+older 50-notice pages, so a filing wave cannot be reduced to its newest 50
+notices. Calls are spaced 10.5 seconds apart to stay inside the
+six-calls-per-minute product limit. Its disclosure index is stored separately
+from public KAP notification IDs; those identifiers must never be assumed
+interchangeable.
+
+### Current operating status (30 July 2026)
+
+The public KAP site contains June 2026 portfolio reports (for example, FPH
+and PPH were published on 2 July), but the initial MKK recovery runs found no
+*recognised* June reports. This was a discovery-selection problem, not evidence
+that funds failed to publish. The collector now reads the report title returned
+by the MKK list endpoint first and spends detail calls on explicit portfolio
+reports before generic fund notices. It also recognises both normal Turkish
+text and the occasional incorrectly decoded text returned by the development
+gateway.
+
+This change is intentionally awaiting the next permitted run before any June
+coverage figure is claimed. Until then, the data-status page's June `unseen`
+state means **not yet collected**, not "the fund has no holdings" or "the fund
+did not publish".
 
 The MKK detail record supplies the fund code, subject, reporting period,
 publication time and attachment references. The attachment remains the source

@@ -724,6 +724,40 @@ def test_mkk_classifier_handles_turkish_dotless_i():
     assert kap._mkk_is_portfolio_report({}, {
         "subject": {"tr": "Portf\u00f6y Da\u011f\u0131l\u0131m Raporu"},
     })
+    assert kap._mkk_is_portfolio_report({
+        "title": "Portf\u00c3\u00b6y Da\u00c4\u009f\u00c4\u00b1l\u00c4\u00b1m Raporu",
+    }, {})
+
+
+def test_mkk_monthly_prioritises_report_titles_before_generic_notices(tmp_conn):
+    from tefaslab import kap
+
+    class Client:
+        def last_disclosure_index(self):
+            return 250
+
+        def disclosures(self, start):
+            return [
+                {"disclosureIndex": 201, "fundCode": "AAA", "fundId": "1",
+                 "title": "Generic notice", "subReportIds": [], "acceptedDataFileTypes": []},
+                {"disclosureIndex": 202, "fundCode": "AAA", "fundId": "1",
+                 "title": "Portf\u00f6y Da\u011f\u0131l\u0131m Raporu", "subReportIds": [],
+                 "acceptedDataFileTypes": []},
+            ]
+
+        def disclosure_detail(self, did):
+            assert did == 202
+            return {"subject": {"tr": "Portf\u00f6y Da\u011f\u0131l\u0131m Raporu"},
+                    "period": "01.06.2026 - 30.06.2026", "time": "03.07.2026 10:00:00",
+                    "attachmentUrls": []}
+
+    tmp_conn.executescript(kap.SCHEMA)
+    tmp_conn.execute("INSERT INTO funds VALUES ('AAA', 'Alpha', 'YAT', 'Equity Turkey')")
+    out = kap.discover_mkk_monthly(tmp_conn, "2026-06", batches=1,
+                                    detail_limit=1, client=Client())
+    assert out["portfolio_reports"] == 1
+    assert tmp_conn.execute(
+        "SELECT status FROM mkk_disclosures WHERE disclosure_index=202").fetchone()[0] == "found"
 
 
 def test_mkk_fund_sync_uses_fresh_checkpoint(tmp_conn):

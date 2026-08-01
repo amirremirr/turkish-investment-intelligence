@@ -23,6 +23,35 @@ test("mobile navigation exposes the primary routes", async ({ page }) => {
   await expect(nav.getByRole("link", { name: "Data status" })).toBeVisible();
 });
 
+test("global search opens by button and closes with Escape", async ({ page }) => {
+  await page.goto("/", { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "Search funds and stocks" }).click();
+  await expect(page.getByRole("dialog", { name: "Search funds and stocks" })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Search funds and stocks" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "Search funds and stocks" })).toBeHidden();
+});
+
+test("global search opens from its keyboard shortcut and navigates a result", async ({ page }) => {
+  await page.goto("/", { waitUntil: "networkidle" });
+  await page.keyboard.press("Control+k");
+  const input = page.getByRole("textbox", { name: "Search funds and stocks" });
+  await expect(input).toBeFocused();
+  await input.fill("AFT");
+  const firstResult = page.getByRole("option").first();
+  await expect(firstResult).toBeVisible();
+  await firstResult.click();
+  await expect(page).toHaveURL(/\/(funds|stocks)\//);
+});
+
+test("mobile navigation exposes the search trigger", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/", { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "Open navigation" }).click();
+  await page.getByRole("button", { name: "Search funds and stocks" }).click();
+  await expect(page.getByRole("dialog", { name: "Search funds and stocks" })).toBeVisible();
+});
+
 test("screener restores shareable filters and sort from the URL", async ({ page }) => {
   await page.goto("/funds?q=ABC&minAum=500000000&sort=aum&dir=asc", {
     waitUntil: "networkidle",

@@ -163,7 +163,28 @@ export default async function FundPage({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-6">
+      <nav
+        aria-label="Fund profile sections"
+        className="sticky top-14 z-10 -mx-5 overflow-x-auto border-y bg-bg/95 px-5 py-2 backdrop-blur"
+      >
+        <div className="flex min-w-max gap-1 text-sm">
+          {[
+            ["overview", "Overview"],
+            ["performance", "Performance"],
+            ["factor-model", "Factor model"],
+            ["holdings", "Holdings"],
+            ["peers", "Peers"],
+          ].map(([id, label]) => (
+            <a key={id} href={`#${id}`} className="rounded-md px-3 py-1.5 text-muted hover:bg-accent-soft hover:text-fg">
+              {label}
+            </a>
+          ))}
+        </div>
+      </nav>
+
+      <section id="overview" aria-labelledby="overview-title" className="scroll-mt-24">
+        <h2 id="overview-title" className="sr-only">Overview</h2>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-6">
         <Card>
           <Stat
             label="1Y return"
@@ -196,7 +217,8 @@ export default async function FundPage({
         <Card>
           <Stat label="AUM" value={tryBn(fund.aum)} />
         </Card>
-      </div>
+        </div>
+      </section>
 
       <p className="rounded-lg border border-accent bg-accent-soft px-3 py-2 text-xs text-fg">
         <b>Research, not a recommendation:</b> scores are fixed-weight
@@ -205,7 +227,9 @@ export default async function FundPage({
         evidence of manager skill or a buy signal.
       </p>
 
-      {navPoints.length > 2 && (
+      <section id="performance" aria-labelledby="performance-title" className="scroll-mt-24">
+        <h2 id="performance-title" className="sr-only">Performance</h2>
+        {navPoints.length > 2 ? (
         <Card>
           <SectionTitle
             hint={`${nav[0]?.date} → ${nav[nav.length - 1]?.date} · ${intFmt(fund.investors)} investors`}
@@ -214,10 +238,16 @@ export default async function FundPage({
           </SectionTitle>
           <Sparkline points={navPoints} height={180} />
         </Card>
-      )}
+        ) : (
+          <Card>
+            <SectionTitle>Performance</SectionTitle>
+            <p className="text-sm text-muted">NAV history is not available for this fund yet.</p>
+          </Card>
+        )}
+      </section>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <Card>
+        <Card id="factor-model" className="scroll-mt-24">
           <SectionTitle hint={`R² ${num(fund.r_squared, 2)}`}>
             Factor exposure
           </SectionTitle>
@@ -245,6 +275,9 @@ export default async function FundPage({
             (+1d domestic, +2d global); see the methodology.
           </p>
           <p className="mt-2 text-xs text-muted">
+            {fund.r_squared != null && (
+              <>This model explains roughly {num(fund.r_squared * 100, 0)}% of the fund&apos;s observed return variation. </>
+            )}
             This is a four-factor model, not a complete explanation of a fund:
             bond, sector, style and liquidity exposures, fees and timing can
             remain in the residual. For money-market funds, a positive
@@ -252,7 +285,7 @@ export default async function FundPage({
           </p>
         </Card>
 
-        <Card>
+        <Card id="holdings" className="scroll-mt-24">
           <SectionTitle
             hint={portfolioHint}
           >
@@ -337,8 +370,8 @@ export default async function FundPage({
           )}
         </Card>
 
-        {similar.length > 0 && (
-          <Card>
+        {similar.length > 0 ? (
+          <Card id="peers" className="scroll-mt-24">
             <SectionTitle hint="by holdings overlap">
               Most similar funds
             </SectionTitle>
@@ -379,6 +412,14 @@ export default async function FundPage({
               weight (Σ min weight). A high figure means near-identical books —
               holdings-based herding, independent of the return-based
               closet-index signal.
+            </p>
+          </Card>
+        ) : (
+          <Card id="peers" className="scroll-mt-24">
+            <SectionTitle hint="requires overlapping disclosed books">Peers</SectionTitle>
+            <p className="text-sm text-muted">
+              Comparable funds will appear once this fund and other funds have
+              enough parsed KAP holdings to measure overlap.
             </p>
           </Card>
         )}

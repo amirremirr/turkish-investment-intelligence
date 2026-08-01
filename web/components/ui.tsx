@@ -83,12 +83,15 @@ export function PageHeader({
 export function Card({
   children,
   className = "",
+  id,
 }: {
   children: React.ReactNode;
   className?: string;
+  id?: string;
 }) {
   return (
     <div
+      id={id}
       className={`rounded-xl border bg-surface p-5 ${className}`}
     >
       {children}
