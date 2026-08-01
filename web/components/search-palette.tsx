@@ -34,8 +34,8 @@ export function SearchPalette({
   }, [onOpenChange]);
 
   const select = (result: SearchResult) => {
-    close();
     router.push(result.href);
+    close();
   };
 
   useEffect(() => {

@@ -48,7 +48,10 @@ test("mobile navigation exposes the search trigger", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/", { waitUntil: "networkidle" });
   await page.getByRole("button", { name: "Open navigation" }).click();
-  await page.getByRole("button", { name: "Search funds and stocks" }).click();
+  await page
+    .getByRole("navigation", { name: "Mobile navigation" })
+    .getByRole("button", { name: "Search funds and stocks" })
+    .click();
   await expect(page.getByRole("dialog", { name: "Search funds and stocks" })).toBeVisible();
 });
 
