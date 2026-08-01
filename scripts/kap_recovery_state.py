@@ -15,7 +15,15 @@ from __future__ import annotations
 
 import argparse
 import sqlite3
+import sys
 from pathlib import Path
+
+# ``python scripts/kap_recovery_state.py`` puts ``scripts/`` rather than the
+# repository root on ``sys.path``.  Make the package import explicit so this
+# utility behaves identically in GitHub Actions and in pytest.
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from tefaslab import kap
 
