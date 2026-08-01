@@ -42,6 +42,9 @@ test("global search opens from its keyboard shortcut and navigates a result", as
   await expect(firstResult).toBeVisible();
   await firstResult.click();
   await expect(page).toHaveURL(/\/(funds|stocks)\//);
+  if (page.url().includes("/funds/")) {
+    await expect(page.getByRole("navigation", { name: "Fund profile sections" })).toBeVisible();
+  }
 });
 
 test("mobile navigation exposes the search trigger", async ({ page }) => {

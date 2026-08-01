@@ -9,7 +9,7 @@ import {
   getFundAttribution,
 } from "@/lib/queries";
 import { Card, Stat, SectionTitle, Bar } from "@/components/ui";
-import { Sparkline } from "@/components/sparkline";
+import { NavChart } from "@/components/nav-chart";
 import { pct, pctPoints, num, tryBn, intFmt, signClass } from "@/lib/format";
 
 export const revalidate = 3600;
@@ -65,10 +65,6 @@ export default async function FundPage({
     getFundAttribution(code).catch(() => []),
     getFundPortfolioStatus(code).catch(() => null),
   ]);
-
-  // downsample NAV to ~200 points for a compact SVG
-  const step = Math.max(1, Math.floor(nav.length / 200));
-  const navPoints = nav.filter((_, i) => i % step === 0).map((d) => d.price);
 
   const maxBeta = Math.max(
     0.5,
@@ -229,14 +225,14 @@ export default async function FundPage({
 
       <section id="performance" aria-labelledby="performance-title" className="scroll-mt-24">
         <h2 id="performance-title" className="sr-only">Performance</h2>
-        {navPoints.length > 2 ? (
+        {nav.length > 2 ? (
         <Card>
           <SectionTitle
             hint={`${nav[0]?.date} → ${nav[nav.length - 1]?.date} · ${intFmt(fund.investors)} investors`}
           >
             NAV history
           </SectionTitle>
-          <Sparkline points={navPoints} height={180} />
+          <NavChart points={nav} />
         </Card>
         ) : (
           <Card>
