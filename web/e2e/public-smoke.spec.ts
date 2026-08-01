@@ -64,3 +64,9 @@ test("screener restores shareable filters and sort from the URL", async ({ page 
   await expect(page.getByRole("combobox", { name: "Filter by minimum assets under management" })).toHaveValue("500000000");
   await expect(page.getByRole("columnheader", { name: /AUM/ })).toHaveAttribute("aria-sort", "ascending");
 });
+
+test("closet-index screener preset is shareable and carries its caveat", async ({ page }) => {
+  await page.goto("/funds?preset=closet-index", { waitUntil: "networkidle" });
+  await expect(page.getByRole("button", { name: "Closet-index candidates" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByText("Exposure classification, not a value judgement:")).toBeVisible();
+});

@@ -65,6 +65,23 @@ const COLS: {
 
 const SORT_KEYS = new Set<SortKey>(COLS.map((column) => column.key));
 const PAGE_SIZE = 100;
+const PRESETS = [
+  {
+    key: "top-research",
+    label: "Top research score",
+    changes: { sort: "skill_score", dir: "desc", minAum: null, cat: null },
+  },
+  {
+    key: "large-aum",
+    label: "Large AUM",
+    changes: { sort: "aum", dir: "desc", minAum: 500e6, cat: null },
+  },
+  {
+    key: "closet-index",
+    label: "Closet-index candidates",
+    changes: { sort: "skill_score", dir: "desc", minAum: null, cat: null },
+  },
+] as const;
 
 export function FundTable({ funds }: { funds: FundRow[] }) {
   const router = useRouter();
@@ -74,6 +91,7 @@ export function FundTable({ funds }: { funds: FundRow[] }) {
   const q = searchParams.get("q") ?? "";
   const cat = searchParams.get("cat") ?? "All";
   const minAum = Number(searchParams.get("minAum") ?? 0) || 0;
+  const preset = searchParams.get("preset") ?? "";
   const requestedSort = searchParams.get("sort") as SortKey | null;
   const sortKey = requestedSort && SORT_KEYS.has(requestedSort)
     ? requestedSort
@@ -114,12 +132,15 @@ export function FundTable({ funds }: { funds: FundRow[] }) {
     }
     if (cat !== "All") out = out.filter((fund) => fund.category === cat);
     if (minAum > 0) out = out.filter((fund) => (fund.aum ?? 0) >= minAum);
+    if (preset === "closet-index") {
+      out = out.filter((fund) => fund.closet_bucket === "closet index");
+    }
     return [...out].sort((a, b) => {
       const av = a[sortKey] ?? -Infinity;
       const bv = b[sortKey] ?? -Infinity;
       return asc ? av - bv : bv - av;
     });
-  }, [funds, q, cat, minAum, sortKey, asc]);
+  }, [funds, q, cat, minAum, preset, sortKey, asc]);
 
   const setSort = (key: SortKey) => {
     updateParams(
@@ -164,11 +185,41 @@ export function FundTable({ funds }: { funds: FundRow[] }) {
         </Select>
         <span className="text-sm text-muted">{rows.length} funds</span>
       </div>
+      <div className="-mt-1 mb-4 flex flex-wrap gap-2" aria-label="Screener presets">
+        {PRESETS.map((item) => (
+          <Button
+            key={item.key}
+            variant={preset === item.key ? "primary" : "secondary"}
+            aria-pressed={preset === item.key}
+            className="h-8"
+            onClick={() => updateParams({ preset: item.key, ...item.changes })}
+          >
+            {item.label}
+          </Button>
+        ))}
+        {preset && (
+          <Button
+            variant="ghost"
+            className="h-8"
+            onClick={() => updateParams({ preset: null })}
+          >
+            Clear preset
+          </Button>
+        )}
+      </div>
       <p className="-mt-1 mb-4 text-xs text-muted">
         Scores are fixed-weight research heuristics, not recommendations or
         citable evidence of individual manager skill. Compare funds within the
         same category.
       </p>
+      {preset === "closet-index" && (
+        <p className="-mt-1 mb-4 rounded-lg border border-accent bg-accent-soft p-3 text-xs text-fg">
+          <b>Exposure classification, not a value judgement:</b> these large
+          Equity Turkey funds historically had BIST100-like exposure (R² ≥ 0.85
+          and beta near 1). This is gross of fees and does not prove that a fund
+          is unsuitable or that its manager lacks skill.
+        </p>
+      )}
 
       <div className="overflow-x-auto rounded-xl border">
         <table className="w-full text-sm">

@@ -17,13 +17,16 @@ export type FundRow = {
   aum: number | null;
   skill_score: number | null;
   suitability_score: number | null;
+  closet_bucket: string | null;
 };
 
 export async function getScreenerFunds(): Promise<FundRow[]> {
   const rows = await sql`
-    SELECT code, title, category, ret_1y, sharpe, max_dd, alpha_annual,
-           aum, skill_score, suitability_score
-    FROM dash_quality`;
+    SELECT q.code, q.title, q.category, q.ret_1y, q.sharpe, q.max_dd,
+           q.alpha_annual, q.aum, q.skill_score, q.suitability_score,
+           c.bucket AS closet_bucket
+    FROM dash_quality q
+    LEFT JOIN dash_closet_detail c ON c.code = q.code`;
   return rows.map((r) => ({
     code: r.code,
     title: r.title,
@@ -35,6 +38,7 @@ export async function getScreenerFunds(): Promise<FundRow[]> {
     aum: n(r.aum),
     skill_score: n(r.skill_score),
     suitability_score: n(r.suitability_score),
+    closet_bucket: (r.closet_bucket as string | null) ?? null,
   }));
 }
 
