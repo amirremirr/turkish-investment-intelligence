@@ -51,7 +51,9 @@ def _quote(identifier: str) -> str:
 
 def _table_exists(conn: sqlite3.Connection, schema: str, table: str) -> bool:
     return bool(conn.execute(
-        f"SELECT 1 FROM {_quote(schema)}.sqlite_master "
+        # SQLite accepts a quoted schema for PRAGMA, but not reliably for the
+        # ``schema.sqlite_master`` form.  Both values are internal constants.
+        f"SELECT 1 FROM {schema}.sqlite_master "
         "WHERE type='table' AND name=?", (table,)
     ).fetchone())
 
