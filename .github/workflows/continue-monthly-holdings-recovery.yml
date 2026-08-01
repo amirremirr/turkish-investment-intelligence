@@ -22,6 +22,10 @@ on:
         type: choice
         default: "extended-pass-2"
         options: ["pass-2", "extended-pass-1", "extended-pass-2"]
+      period:
+        description: "Portfolio month to recover (YYYY-MM)"
+        required: true
+        default: "2026-06"
 
 permissions:
   contents: read
@@ -38,6 +42,7 @@ env:
   PYTHONIOENCODING: utf-8
   RECOVERY_RUN_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.recovery_run_id || github.event.workflow_run.id }}
   RECOVERY_CHECKPOINT: ${{ github.event_name == 'workflow_dispatch' && inputs.checkpoint || 'pass-2' }}
+  RECOVERY_PERIOD: ${{ github.event_name == 'workflow_dispatch' && inputs.period || '' }}
   RECOVERY_OUTPUT_ID: ${{ github.run_id }}
 
 jobs:
@@ -83,7 +88,7 @@ jobs:
           import sqlite3
           from tefaslab import kap
 
-          period = kap.latest_collection_period()
+          period = os.getenv("RECOVERY_PERIOD") or kap.latest_collection_period()
           conn = sqlite3.connect("data/funds.db")
           reports = conn.execute(
               "SELECT COUNT(DISTINCT fund_code) FROM mkk_disclosures "
@@ -103,7 +108,11 @@ jobs:
           # the live head. A clean two-window validation that advances at least
           # 1,000 indexes is useful evidence even before it reaches that wave.
           healthy_progress = scanned >= 1000 and errors == 0
-          proceed = "true" if reports or healthy_progress else "false"
+          # A manual run names an existing checkpoint and target period, so it
+          # is an explicit operator decision to continue despite historical
+          # upstream errors recorded in that ledger.
+          manual_resume = os.getenv("GITHUB_EVENT_NAME") == "workflow_dispatch"
+          proceed = "true" if manual_resume or reports or healthy_progress else "false"
           print(
               "MKK validation: "
               f"period={period}, discovered fund reports={reports}, "
@@ -145,7 +154,9 @@ jobs:
       - name: Continue four paced recovery cycles
         run: |
           test -f data/funds.db || { echo "::error::validation database was not saved"; exit 1; }
-          python -m tefaslab holdings monthly --count 5000 --batches 50 --details 220 --parse-limit 150 --cycles 4
+          PERIOD_ARG=""
+          if [ -n "$RECOVERY_PERIOD" ]; then PERIOD_ARG="--period $RECOVERY_PERIOD"; fi
+          python -m tefaslab holdings monthly --count 5000 --batches 50 --details 220 --parse-limit 150 --cycles 4 $PERIOD_ARG
           python -m tefaslab holdings stats
           python -m tefaslab daily --skip-raw
       - name: Save database for final pass
@@ -191,7 +202,9 @@ jobs:
       - name: Continue four paced recovery cycles
         run: |
           test -f data/funds.db || { echo "::error::extended recovery database was not saved"; exit 1; }
-          python -m tefaslab holdings monthly --count 5000 --batches 50 --details 220 --parse-limit 150 --cycles 4
+          PERIOD_ARG=""
+          if [ -n "$RECOVERY_PERIOD" ]; then PERIOD_ARG="--period $RECOVERY_PERIOD"; fi
+          python -m tefaslab holdings monthly --count 5000 --batches 50 --details 220 --parse-limit 150 --cycles 4 $PERIOD_ARG
           python -m tefaslab holdings stats
           python -m tefaslab daily --skip-raw
       - name: Save final database
