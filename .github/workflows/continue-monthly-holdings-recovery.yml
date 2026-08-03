@@ -64,12 +64,12 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - name: Restore validated database
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: data/funds.db
           key: funds-db-${{ env.RECOVERY_RUN_ID }}-${{ env.RECOVERY_CHECKPOINT }}
       - name: Restore durable KAP recovery checkpoint
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: data/kap-recovery-state.db
           key: kap-recovery-${{ env.RECOVERY_RUN_ID }}-${{ env.RECOVERY_CHECKPOINT }}
@@ -139,12 +139,12 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - name: Restore validated database
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: data/funds.db
           key: funds-db-${{ env.RECOVERY_RUN_ID }}-${{ env.RECOVERY_CHECKPOINT }}
       - name: Restore durable KAP recovery checkpoint
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: data/kap-recovery-state.db
           key: kap-recovery-${{ env.RECOVERY_RUN_ID }}-${{ env.RECOVERY_CHECKPOINT }}
@@ -161,7 +161,7 @@ jobs:
           python -m tefaslab daily --skip-raw
       - name: Save database for final pass
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: data/funds.db
           key: funds-db-${{ env.RECOVERY_OUTPUT_ID }}-extended-pass-1
@@ -170,7 +170,7 @@ jobs:
         run: python scripts/kap_recovery_state.py export
       - name: Cache KAP recovery checkpoint for final pass
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: data/kap-recovery-state.db
           key: kap-recovery-${{ env.RECOVERY_OUTPUT_ID }}-extended-pass-1
@@ -188,12 +188,12 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - name: Restore database from extended pass 1
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: data/funds.db
           key: funds-db-${{ env.RECOVERY_OUTPUT_ID }}-extended-pass-1
       - name: Restore KAP recovery checkpoint from extended pass 1
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: data/kap-recovery-state.db
           key: kap-recovery-${{ env.RECOVERY_OUTPUT_ID }}-extended-pass-1
@@ -209,7 +209,7 @@ jobs:
           python -m tefaslab daily --skip-raw
       - name: Save final database
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: data/funds.db
           key: funds-db-${{ env.RECOVERY_OUTPUT_ID }}-extended-pass-2
@@ -218,7 +218,7 @@ jobs:
         run: python scripts/kap_recovery_state.py export
       - name: Cache final KAP recovery checkpoint
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: data/kap-recovery-state.db
           key: kap-recovery-${{ env.RECOVERY_OUTPUT_ID }}-extended-pass-2
