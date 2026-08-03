@@ -61,7 +61,7 @@ jobs:
       # it is persisted across runs via the actions cache. Every run
       # saves a new cache key; restore-keys picks the newest.
       - name: Restore database
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: data/funds.db
           key: funds-db-${{ github.run_id }}
@@ -72,7 +72,7 @@ jobs:
       # run can never roll a long holdings recovery backwards.
       - name: Restore KAP recovery checkpoint
         if: github.event.inputs.mode != 'bootstrap'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: data/kap-recovery-state.db
           key: kap-recovery-${{ github.run_id }}
@@ -168,7 +168,7 @@ jobs:
 
       - name: Save database
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: data/funds.db
           key: funds-db-${{ github.run_id }}
@@ -181,7 +181,7 @@ jobs:
 
       - name: Cache KAP recovery checkpoint
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: data/kap-recovery-state.db
           key: kap-recovery-${{ github.run_id }}

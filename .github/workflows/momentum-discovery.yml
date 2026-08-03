@@ -38,7 +38,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - name: Restore latest research database
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: data/funds.db
           key: momentum-discovery-db-${{ github.run_id }}
